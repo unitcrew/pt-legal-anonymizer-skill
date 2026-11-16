@@ -1849,9 +1849,21 @@ def extract_ocr_layout_for_page(
     full_text = "\n".join(
         line["text"] for line in lines if not str(line["text"]).startswith("[INK_REGION_")
     )
+    # how well the OCR read this page (word confidences, 0-100): decides whether the page needs to be looked at
+    _confs = []
+    if tess_bin and best_data and best_data.get("conf"):
+        for _t, _c in zip(best_data.get("text") or [], best_data.get("conf") or []):
+            try:
+                _c = float(_c)
+            except (TypeError, ValueError):
+                continue
+            if str(_t or "").strip() and _c >= 0:
+                _confs.append(_c)
     layout = {
         "schema_version": 13,
         "page_number": page_number,
+        "ocr_mean_conf": round(sum(_confs) / len(_confs), 1) if _confs else 0.0,
+        "ocr_low_conf_share": round(sum(1 for _c in _confs if _c < 60) / len(_confs), 3) if _confs else 1.0,
         "rotation_detected_cw": best_angle_cw,
         "image_width": iw_orig,
         "image_height": ih_orig,

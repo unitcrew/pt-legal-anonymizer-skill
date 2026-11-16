@@ -2965,6 +2965,25 @@ def _ocr_pages_parallel(visual_redactor: Any, working_file: Path, page_nums: Lis
         visual_redactor.TESS_SINGLE_THREAD = False
 
 
+def page_needs_vision(lay: Dict[str, Any]) -> Tuple[bool, str]:
+    """Does a scanned page need to be looked at, or does its OCR text (already in the chunks) say everything?
+    Looking costs up to ~1,000 image tokens plus the model's thinking per page, so only pages where something can't be
+    read as text are sent to the eyes: photos/faces, QR codes, ID-card-like sparse layouts, rotated or poor scans."""
+    if "ocr_mean_conf" not in lay:
+        return True, "no OCR confidence recorded"
+    if lay.get("face_boxes_1000"):
+        return True, "has a photo"
+    if lay.get("qr_boxes_1000"):
+        return True, "has a QR code"
+    n_lines = len(lay.get("lines") or [])
+    if n_lines < 12:
+        return True, "sparse layout (ID card, receipt or form)"
+    share = lay.get("ocr_low_conf_share")
+    if float(lay.get("ocr_mean_conf") or 0) < 80 or (1.0 if share is None else float(share)) > 0.15:
+        return True, f"OCR is unsure (mean confidence {lay.get('ocr_mean_conf')})"
+    return False, f"clean typed text ({n_lines} lines, mean OCR confidence {lay.get('ocr_mean_conf')})"
+
+
 def _prepare_scanned_pages_screenshots_for_chunk(
     working_file: Path,
     original_file: Path,
@@ -3081,6 +3100,20 @@ def _prepare_scanned_pages_screenshots_for_chunk(
             visual_redactor.render_annotated_grid_image(img, lay, auto_boxes, grid_jpg)
             ws_grid_path, abs_work_grid = _mirror_grid_to_active_workspace_if_outside(grid_jpg, session_id)
 
+            needs, why = page_needs_vision(lay)
+            if needs:
+                instr = (
+                    f"Page {p_num} of '{original_file.name}' needs a look ({why}): view `grid_image` ('{ws_grid_path}') with "
+                    f"`show_file` (maximum 4 images per turn!), add any visible names/addresses/accounts to "
+                    f"`entities_staging_file`, and if any blue `#ID` badge needs redaction, list its integer ID under "
+                    f"\"VISUAL_REDACTIONS\": {{\"{original_file.name}\": {{\"line_ids\": [...]}}}}."
+                )
+            else:
+                instr = (
+                    f"Page {p_num} of '{original_file.name}' was read cleanly by OCR ({why}); its text is in the chunks, so "
+                    f"review it there — no need to view the image. Open `grid_image` ('{ws_grid_path}') only if the text "
+                    f"suggests handwriting, stamps, signatures or a photo, or to pick `#ID` badges."
+                )
             out_items.append(
                 {
                     "source_file": original_file.name,
@@ -3089,14 +3122,11 @@ def _prepare_scanned_pages_screenshots_for_chunk(
                     "rotation_auto_corrected_cw": rot_cw,
                     "grid_image": ws_grid_path,
                     "work_dir_grid_image": abs_work_grid,
+                    "needs_vision": needs,
+                    "vision_reason": why,
                     "auto_matched_boxes_count": len(auto_boxes),
                     "candidate_blue_badges": cand_badges,
-                    "vision_instruction": (
-                        f"Page {p_num} of '{original_file.name}' is a scanned image (`grid_image`: '{ws_grid_path}'). "
-                        f"View `grid_image` directly with `show_file` (maximum 4 images per turn!), add any visible names/addresses/accounts "
-                        f"to `entities_staging_file`, and if any blue `#ID` badge needs redaction, list its integer ID under "
-                        f"\"VISUAL_REDACTIONS\": {{\"{original_file.name}\": {{\"line_ids\": [...]}}}}."
-                    ),
+                    "vision_instruction": instr,
                 }
             )
     except Exception:
@@ -3472,6 +3502,10 @@ def _chunk_single_file(
     }
     if scanned_vision_pages:
         manifest["scanned_pages_screenshots"] = scanned_vision_pages
+        to_view = [p for p in scanned_vision_pages if p.get("needs_vision", True)]
+        manifest["vision_summary"] = (
+            f"{len(to_view)} of {len(scanned_vision_pages)} scanned page images need a look (photos, IDs, QR codes, "
+            f"unsure OCR); the others were read cleanly and are reviewed from the chunk text.")
     return manifest, pre_masked, scanned_vision_pages
 
 
@@ -3682,7 +3716,11 @@ def main() -> None:
                 ccf.write_text(ch["text"], encoding="utf-8")
                 combined_chunk_files.append(str(ccf.resolve()))
 
-            grid_paths_all = [item["grid_image"] for item in all_scanned_vision if item.get("grid_image")]
+            # only the pages that need eyes (photos, IDs, QR codes, unsure OCR); clean typed pages are reviewed from
+            # the chunk text, which already holds their OCR
+            grid_paths_all = [item["grid_image"] for item in all_scanned_vision
+                              if item.get("grid_image") and item.get("needs_vision", True)]
+            ocr_only = [item["grid_image"] for item in all_scanned_vision if item.get("grid_image") and not item.get("needs_vision", True)]
             vision_batches_max_4 = [grid_paths_all[i : i + 4] for i in range(0, len(grid_paths_all), 4)]
             out_payload = {
                 "status": "ok",
@@ -3694,6 +3732,9 @@ def main() -> None:
                 "files_chunked_count": len(file_manifests),
                 "total_combined_chars": len(full_combined_pre_masked),
                 "vision_batches_max_4_per_turn": vision_batches_max_4,
+                "vision_summary": (f"{len(grid_paths_all)} page image(s) need a look; {len(ocr_only)} clean typed page(s) "
+                                   "were read by OCR and are reviewed from the chunk text (open one only if its text "
+                                   "suggests handwriting, stamps or a photo)."),
                 "scanned_pages_to_inspect_with_vision": all_scanned_vision,
                 "combined_chunk_files": combined_chunk_files,
                 "all_chunk_files": all_chunks,

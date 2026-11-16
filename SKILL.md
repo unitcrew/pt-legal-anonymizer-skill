@@ -70,7 +70,7 @@ python "<SKILL_DIR>/scripts/legal_anonymizer.py" chunk --file "<CAMINHO_DO_ARQUI
 
 ### Step 2: Mandatory Vision Backup — View `.grid.jpg` Batches (`<= 4` per Turn) & Populate `entities_staging_file`
 
-1. Step through `"vision_batches_max_4_per_turn"` by calling `show_file` on **1 batch (at most 4 `.grid.jpg` files) per turn** until every `.grid.jpg` has been visually inspected:
+1. Step through `"vision_batches_max_4_per_turn"` by calling `show_file` on **1 batch (at most 4 `.grid.jpg` files) per turn** until every page in it has been visually inspected. The batches hold only the pages that need eyes (`"needs_vision": true`: photos, ID cards, QR codes, unsure OCR); clean typed pages (`"needs_vision": false`) were read by OCR and are reviewed from the chunk text, which saves an image (~1,000 tokens) per page. Open one of those only if its text suggests handwriting, stamps, signatures or a photo:
    - Check the **bold red boxes** on each page: anything inside a red box is **already** redacted by the blind script.
    - Check the **unboxed areas and blue `#ID` badges**: look specifically for any unboxed person names, nicknames in chat screenshots (`"Juju"`, `"Tia Lu"`, `"Dudu"`), unboxed handwritten signatures, or unboxed ID/receipt lines.
 2. Write any additional entities or blue `#ID` badge numbers you spotted into `"entities_staging_file"` (`discovered_entities.json`):
