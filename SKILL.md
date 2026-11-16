@@ -135,6 +135,17 @@ python "<SKILL_DIR>/scripts/legal_anonymizer.py" restore --file "<ARQUIVO_PARA_R
 
 ---
 
+## 2b. Cloud Helpers (LocalChat `ask_cloud`)
+
+LocalChat can let the local model consult a cloud model (Gemini). Before any question leaves the PC, LocalChat replaces
+every string in this skill's vault (`~/.pt_legal_anonymizer/sessions/*/mapping.json`, or `PT_LEGAL_ANONYMIZER_HOME`)
+with its placeholder (`<PESSOA_1>`…), then CPFs, case numbers, e-mails, phones and keys, then has the local model check
+what is left. So:
+- Run `chunk`/`anonymize` first: every entity you confirm here is also protected in cloud questions.
+- Never paste raw document text into `ask_cloud`. Ask about the law, the argument or the code in general terms, or send
+  anonymized chunk text (it already carries placeholders). Keep placeholders exactly as written.
+- The answer comes back with the real values filled in locally; `restore` is only needed for files.
+
 ## 3. Reference Taxonomy
 
 For the full list of 24+ entity categories (`<PESSOA_N>`, `<APELIDO_N>`, `<CPF_N>`, `<CNPJ_N>`, `<RG_N>`, `<CNH_N>`, `<OAB_N>`, `<PROCESSO_N>`, `<CONTA_BANCARIA_N>`, `<ID_TRANSACAO_N>`, `<CHAVE_PIX_N>`, `<ASSINATURA_N>`, `<FOTO_N>`, `<BIOMETRIA_N>`, `<QR_CODE_N>`, etc.), consult `references/portuguese-legal-taxonomy.md`.
