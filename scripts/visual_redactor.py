@@ -131,6 +131,43 @@ def get_available_tesseract_lang(tess_bin: str) -> str:
     return "eng"
 
 
+# When pages are OCR'd in parallel, each Tesseract runs single-threaded: one thread per page uses the cores far
+# better than several OpenMP threads fighting over them.
+TESS_SINGLE_THREAD = False
+
+
+def _tess_env() -> Optional[Dict[str, str]]:
+    if not TESS_SINGLE_THREAD:
+        return None
+    env = dict(os.environ)
+    env["OMP_THREAD_LIMIT"] = "1"
+    return env
+
+
+def detect_orientation_osd(img: Any, tess_bin: str, timeout: int = 30) -> Tuple[int, float]:
+    """Tesseract's orientation detector (`--psm 0`): (degrees to rotate clockwise, confidence). One fast pass at
+    full resolution instead of four sparse OCR passes; (0, 0.0) when it is unavailable or unsure."""
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+        tmp_png = Path(tf.name)
+    try:
+        img.save(str(tmp_png), format="PNG")
+        proc = subprocess.run([tess_bin, str(tmp_png), "stdout", "--psm", "0"], capture_output=True, timeout=timeout,
+                              check=False, env=_tess_env())
+        out = (proc.stdout or b"").decode("utf-8", errors="replace")
+        m_rot = re.search(r"Rotate:\s*(\d+)", out)
+        m_conf = re.search(r"Orientation confidence:\s*([\d.]+)", out)
+        if not m_rot or not m_conf:
+            return 0, 0.0
+        return int(m_rot.group(1)) % 360, float(m_conf.group(1))
+    except Exception:
+        return 0, 0.0
+    finally:
+        try:
+            tmp_png.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def run_tesseract_cli_tsv(
     img: Any,
     tess_bin: str,
@@ -147,7 +184,7 @@ def run_tesseract_cli_tsv(
     try:
         img.save(str(tmp_png), format="PNG")
         cmd = [tess_bin, str(tmp_png), "stdout", "-l", lang, "--psm", str(psm), "tsv"]
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False, env=_tess_env())
         raw_tsv = (proc.stdout or b"").decode("utf-8", errors="replace")
         lines = raw_tsv.splitlines()
         if len(lines) < 2:
@@ -1598,8 +1635,18 @@ def extract_ocr_layout_for_page(
     lang = get_available_tesseract_lang(tess_bin) if tess_bin else "por"
 
     if tess_bin:
-        clean_ul_0 = _strip_fused_underlines_preserving_glyphs(orig_img)
-        data_0 = run_tesseract_cli_tsv(clean_ul_0, tess_bin, lang, psm=3)
+        # Orientation first, with Tesseract's detector (one ~1 s pass). Confident and not upright: rotate before the
+        # real OCR, so a sideways page costs two passes instead of six. Unsure: the sparse four-angle test below.
+        osd_angle, osd_conf = detect_orientation_osd(orig_img, tess_bin)
+        osd_sure = osd_conf >= 2.0
+        if osd_sure and osd_angle in (90, 180, 270):
+            orig_img_rot = rotate_pil_image_cw(orig_img, osd_angle)
+            data_r = run_tesseract_cli_tsv(_strip_fused_underlines_preserving_glyphs(orig_img_rot), tess_bin, lang, psm=3)
+            if _score_ocr_words_orientation(data_r) > 0:
+                working_img = orig_img_rot
+                best_angle_cw = osd_angle
+        clean_ul_0 = None if best_angle_cw else _strip_fused_underlines_preserving_glyphs(orig_img)
+        data_0 = data_r if best_angle_cw else run_tesseract_cli_tsv(clean_ul_0, tess_bin, lang, psm=3)
         score_0 = _score_ocr_words_orientation(data_0)
         best_data = data_0
         best_score = score_0
@@ -1608,13 +1655,13 @@ def extract_ocr_layout_for_page(
         # tell an upright page from a sideways card: a rotated RG back scored 66 at 0° and was left unrotated, with
         # only fragments of its fields as lines. Sparse-text mode (`--psm 11`) does not rotate blocks: compare its
         # score at all four angles and rotate when another angle clearly wins (same page: 37 at 0° vs 141 at 90°).
-        if score_0 < 400.0:
-            sparse = {0: _score_ocr_words_orientation(run_tesseract_cli_tsv(orig_img, tess_bin, lang, psm=11))}
-            rotated: Dict[int, Any] = {}
-            for cand_angle in (90, 270, 180):
-                rotated[cand_angle] = rotate_pil_image_cw(orig_img, cand_angle)
-                sparse[cand_angle] = _score_ocr_words_orientation(
-                    run_tesseract_cli_tsv(rotated[cand_angle], tess_bin, lang, psm=11))
+        if score_0 < 400.0 and not osd_sure and not best_angle_cw:
+            from concurrent.futures import ThreadPoolExecutor
+            rotated: Dict[int, Any] = {a: rotate_pil_image_cw(orig_img, a) for a in (90, 270, 180)}
+            imgs = {0: orig_img, **rotated}
+            with ThreadPoolExecutor(max_workers=4) as ex:      # the four angles at once
+                futs = {a: ex.submit(run_tesseract_cli_tsv, im, tess_bin, lang, 11) for a, im in imgs.items()}
+                sparse = {a: _score_ocr_words_orientation(f.result()) for a, f in futs.items()}
             win = max(sparse, key=lambda a: sparse[a])
             if win != 0 and sparse[win] > max(sparse[0] * 1.5, sparse[0] + 25.0):
                 working_img = rotated[win]

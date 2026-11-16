@@ -53,6 +53,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import unicodedata
 import urllib.error
 from urllib.parse import unquote
@@ -2929,6 +2930,41 @@ def _mirror_grid_to_active_workspace_if_outside(grid_path: Path, session_id: str
         return abs_grid, None
 
 
+def ocr_workers() -> int:
+    """How many pages to OCR at once: about half the logical cores (the rest stay free for the chat model),
+    capped; LEGAL_ANON_OCR_WORKERS overrides."""
+    env = os.environ.get("LEGAL_ANON_OCR_WORKERS", "").strip()
+    if env.isdigit() and int(env) > 0:
+        return int(env)
+    return max(1, min(12, (os.cpu_count() or 2) // 2))
+
+
+def _ocr_pages_parallel(visual_redactor: Any, working_file: Path, page_nums: List[int], session_id: str) -> None:
+    workers = min(ocr_workers(), len(page_nums))
+    if workers <= 1:
+        return
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    visual_redactor.TESS_SINGLE_THREAD = True
+    t0 = time.time()
+    done = 0
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = [ex.submit(visual_redactor.extract_ocr_layout_for_page, working_file, page_number=p, session_id=session_id,
+                              dpi=200) for p in page_nums]
+            for f in as_completed(futs):
+                done += 1
+                try:
+                    f.result()
+                except Exception as exc:  # the sequential pass retries this page
+                    print(f"[ocr] page failed in parallel, retrying later: {exc}", file=sys.stderr, flush=True)
+                if done % max(1, len(page_nums) // 10) == 0 or done == len(page_nums):
+                    print(f"[ocr] {working_file.name}: {done}/{len(page_nums)} pages ({time.time() - t0:.0f} s)",
+                          file=sys.stderr, flush=True)
+    finally:
+        visual_redactor.TESS_SINGLE_THREAD = False
+
+
 def _prepare_scanned_pages_screenshots_for_chunk(
     working_file: Path,
     original_file: Path,
@@ -2993,6 +3029,10 @@ def _prepare_scanned_pages_screenshots_for_chunk(
         for old_p in pages_dir.glob(f"{clean_stem}.page*.*"):
             if old_p.suffix.lower() == ".png":
                 old_p.unlink(missing_ok=True)
+
+        # OCR every scanned page in parallel first (results land in the per-page cache), one single-threaded
+        # Tesseract per page; the loop below then reads the cache. A 12-page scan went from 129 s to a fraction.
+        _ocr_pages_parallel(visual_redactor, working_file, scanned_page_nums, session_id)
 
         page_bundles = []
         for p_num in scanned_page_nums:
