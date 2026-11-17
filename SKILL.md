@@ -3,7 +3,7 @@ name: pt-legal-anonymizer
 description: Anonymize and restore Brazilian and Portuguese legal documents (.docx, .pdf, .txt, .md, .csv) and scanned image PDFs/receipts/IDs (.pdf, .png, .jpg, .jpeg) 100% locally with full formatting preservation, automatic dependency installation, working-copy isolation inside <folder>/anonymization/, native 1024-token .grid.jpg vision inspection auto-staged in workspace, smart 2-up vertical ID stacking, deterministic CNH/RG landmark & sub-image redaction, Modulo-11 CPF/CNPJ/PIS validation, longest-to-shortest replacement, true PyMuPDF vector and pixel redaction with white placeholders, embedded DOCX image placeholder/restoration, pre-Pass-A underline OCR recovery, and session consistency. Use whenever the user asks to anonymize, redact, mask, sanitize, de-identify, or restore lawsuits, petitions, procuracoes, personal IDs (RG/CNH), police reports (BO/REDS), bank receipts, contracts, or court dockets.
 ---
 
-# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v6.4)
+# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v6.5)
 
 This skill provides a **100% local, zero-cloud, formatting-preserving, and reversible** PII anonymization and visual redaction pipeline for Brazilian and Portuguese legal workflows (`PJe`, `eproc`, `e-SAJ`, `Projudi`, `SEEU`, `REDS`/`BO`, bank receipts, boletos, personal IDs `RG`/`CNH`, WhatsApp screenshots, and powers of attorney `Procurações`).
 
@@ -13,7 +13,7 @@ It is engineered for **local vision LLMs** (such as `Qwen3.6 35B-A3B` in `LocalC
 
 > **v6.4**: photo, thumbprint, signature and field boxes on CNH/RG cards are now placed from the labels printed on the card itself, so they land correctly at any scan size or position (v6.3 used fixed page coordinates). Sideways cards are detected by comparing all four rotations. Vertical serial numbers are boxed where OCR actually reads them. Boleto barcodes and URLs are matched even when OCR inserts spaces.
 
-## 0. Eight Golden Rules for the Local Agent (Read First!)
+## 0. Golden Rules for the Local Agent (Read First!)
 
 1. **Step 0 — Missing Requirements Are Installed Automatically**:
    - `legal_anonymizer.py` automatically runs `ensure_runtime_requirements(auto_install=True)` on startup to check and install any missing Python packages (`pymupdf`, `pillow`, `numpy`, `opencv-python`, `python-docx`). If any dependency or Tesseract OCR (`por+eng`) is missing, install it before proceeding.
@@ -41,9 +41,20 @@ It is engineered for **local vision LLMs** (such as `Qwen3.6 35B-A3B` in `LocalC
    - Register `"Sítio Boa Vista"` or `"Praça Coronel Antônio Bento, nº 33"` (without leading `"logradouro"`).
    - Never register municipalities, states, or court jurisdictions (`"Nova Resende/MG"`, `"Conceição da Aparecida-MG"`, `"Alpinópolis-MG"`, `"Poços de Caldas/MG"`, `"Curitiba, PR"`, `"Belo Horizonte, MG"`).
 
+9. **Run the script plainly — never wrap it in `| Out-File`, `> file` or `Select-Object`**:
+   - The script prints UTF-8 itself and writes one progress line per file to stderr (`[  12.3s] redacting 3/7: .pdf file`). Wrapped in `Out-File`, a long run shows nothing for minutes and you cannot tell a slow file from a stuck one. If LocalChat moves the run to the background, wait for it with `command_status` and read the progress lines.
+10. **One workspace per session — pass `--output-dir` once, at `chunk`**:
+   - The session remembers the folder `chunk` used. `anonymize` and `verify` with the same `--session` find it (and its `discovered_entities.json`) on their own, with or without `--output-dir`. Always edit the `entities_staging_file` path that `chunk` printed.
+11. **Never redo what is done**:
+   - `anonymize --dir` keeps every file whose content and vault have not changed since the last run (`unchanged_since_last_run`). After fixing one file, rerun with `--only <part of its name>`. Use `--force` only when the user asks.
+12. **Let `verify` find the leaks — don't hunt for them by eye**:
+   - After `anonymize`, run `verify` (Step 4). It reads every delivered file back (OCR for image pages), and lists every vault value, part of a registered name, or new CPF/CNPJ/CEP/phone/CRM/e-mail that is still readable, by file and page, with the value masked. A file is done only when `verify` says `ok`. Never tell the user a file is finished while `verify` lists a leak.
+13. **Cited case law stays as it is**:
+   - Court, case number, relator ("Rel. Min. …", "Des. …"), dates and DJe of a cited precedent are public and are never anonymized; don't register them as entities. Only the parties of the user's own case are hidden.
+
 ---
 
-## 1. Standard 3-Step Workflow (Folder or Single File)
+## 1. Standard 4-Step Workflow (Folder or Single File)
 
 Locate `<SKILL_DIR>` (the folder containing this `SKILL.md` and `scripts/legal_anonymizer.py`). Always wrap Windows paths in double quotes `"..."`.
 
@@ -122,6 +133,18 @@ python "<SKILL_DIR>/scripts/legal_anonymizer.py" anonymize --file "<CAMINHO_DO_A
   2. A line that has a blue `#ID` badge: add that ID to `"VISUAL_REDACTIONS": {"<file>": {"line_ids": [...]}}`. Add only the IDs of the lines that show personal data. Never add every ID on the page: that blacks out the headers and tables and still misses what has no badge.
   3. Anything without a badge (a face photo, a thumbprint, a signature, a number printed sideways): add a rectangle, `"VISUAL_REDACTIONS": {"<file>": {"boxes": [[xmin, ymin, xmax, ymax]]}}`, reading the four numbers from the 0-1000 tick marks on the edges of the `.grid.jpg` (x grows to the right, y grows downwards). Make the rectangle a little larger than the thing.
 - If any file had complex visual additions (such as a WhatsApp screenshot or custom `VISUAL_REDACTIONS`), call `show_file` on its `.redacted_preview.jpg` (at most 4 images per turn) to visually confirm that every sensitive region is cleanly covered by a black `<CATEGORIA_ID>` box.
+
+### Step 4: Run `verify` and fix until it says `ok`
+
+```bash
+python "<SKILL_DIR>/scripts/legal_anonymizer.py" verify --dir "<PASTA_DOS_DOCUMENTOS>" --session "<SESSION_ID>"
+```
+
+- Each leak gives the file, the page, the kind, the placeholder (when the vault knows it) and the line around it with the value replaced by `[<PESSOA_3>, 18 chars]`.
+  - `vault value still readable` / `part of a registered name still readable`: the redactor missed it on that page (a table cell, a stamp, a line OCR read out of order). Add that page's line `#ID` or a box under `VISUAL_REDACTIONS`, or the exact way it is written there (all caps, surname first) under `PESSOA`.
+  - `new identifier the vault doesn't have`: add it under its category.
+- Then `anonymize --dir … --session … --only <file>` and `verify` again. Two rounds are normal; if a third still shows the same leak, tell the user which page and what kind, instead of trying again.
+- Pages without a text layer whose letters are drawn as curves (SCR/bank reports "printed to PDF") are handled like scans: OCR'd, then flattened to an image before the black boxes go on.
 
 ---
 

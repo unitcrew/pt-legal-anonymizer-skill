@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 *.anonymized.*
 *.restored.*
+anonymization_pages/
+anonymization/
+*-redact/

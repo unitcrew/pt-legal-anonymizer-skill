@@ -216,6 +216,11 @@ DEFAULT_LEGAL_WHITELIST_PATTERNS = [
     # 2. State/Federal Appellate Precedent Citations with Tribunal/Relator/Julgamento context
     r"\b(?:TJ[A-Z]{2}|TRF\s*[-–]?\s*[1-6]|STJ|STF|TST)\s*[,;:\-–]\s*(?:Apela[çc][ãa]o(?:\s+C[íi]vel|\s+Criminal)?|Agravo\s+(?:de\s+Instrumento|Interno|Regimental)|Recurso\s+Inominado|Embargos\s+de\s+Declara[çc][ãa]o|Mandado\s+de\s+Seguran[çc]a|Habeas\s+Corpus)\s*(?:n[º°o.:]?\s*)?[\d.\-–/]+",
     r"\b(?:Apela[çc][ãa]o(?:\s+C[íi]vel|\s+Criminal)?|Agravo\s+(?:de\s+Instrumento|Interno|Regimental)|Recurso\s+Inominado|Conflito\s+de\s+Compet[êe]ncia)\s*(?:n[º°o.:]?\s*)?\d[\d.\-–/]{10,28}(?=[,;)\s]{1,15}(?:Rel(?:ator|\.)|[ÓO]rg[ãa]o\s+Julgador|C[âa]mara|Turma|j\.\s*\d|julgado\s+em|Data\s+de\s+Julgamento|TJ[A-Z]{2}|TRF|STJ|STF))",
+    # 2b. Who judged a cited case is public: "Rel. Min. Nancy Andrighi", "Relator Des. Fulano de Tal",
+    #     "Ministra NANCY ANDRIGHI", "Rel. p/ acórdão Min. ...". Names are matched case-sensitively.
+    r"\b(?:Rel(?:ator|atora|\.)?\s*(?:p/\s*(?:o\s+)?ac[óo]rd[ãa]o\s*)?[:.]?\s*(?:(?:Min(?:istr[oa])?|Des(?:embargador(?:a)?|a)?|Ju[íi]za?(?:\s+Convocad[oa])?|Cons(?:elheir[oa])?)\.?)|Ministr[oa](?:\s+Relator(?:a)?)?|Desembargador(?:a)?(?:\s+Relator(?:a)?)?)\s+(?-i:[A-ZÀ-Ý][A-Za-zÀ-ÿ'.]+(?:\s+(?:d[aeo]s?\s+|e\s+)?[A-ZÀ-Ý][A-Za-zÀ-ÿ'.]+){0,5})",
+    # 2c. Dates and journals that close a citation ("julgado em 12/03/2024", "DJe 15/03/2024")
+    r"\b(?:julgado\s+em|j\.|DJe|DJ|DJEN|DJMG|DJSP|publicado\s+em)\s*:?\s*\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}",
     # 3. State & Federal highways (avoid matching as RG: highways have 2-3 digits like MG-179, BR-116, SP-330)
     r"(?<!\bRG\s)(?<!\bCI\s)\b(?:BR|MG|SP|RJ|PR|SC|RS|BA|GO|DF|ES|PE|CE|MT|MS|PA|AM|MA|PB|RN|AL|SE|PI|TO|RO|AC|AP|RR)\s*[-–]\s*\d{2,3}\b(?!\.?\d{3})",
     # 4. Statutes, Codes, Súmulas, Enunciados, and Temas (LeNER-Br LEGISLACAO)
@@ -334,6 +339,22 @@ def build_brazilian_legal_rules() -> List[RegexRule]:
             group=1,
             validator=validate_cpf_checksum,
         ),
+        # Regra #6B: CPF written as 9 digits, then "/" or "-" and the 2 check digits ("123456789/09", "123456789-09")
+        RegexRule(
+            rule_id="Regra #6B [CPF_9_2]",
+            category="CPF",
+            pattern=r"(?<![\d./])(\d{9}\s*[-–/]\s*\d{2})(?![\d/])",
+            group=1,
+            validator=validate_cpf_checksum,
+        ),
+        # Regra #6C: anything labelled CPF, even with odd OCR separators, when the check digits agree
+        RegexRule(
+            rule_id="Regra #6C [CPF_ROTULADO]",
+            category="CPF",
+            pattern=r"\bC\.?\s?P\.?\s?F\.?\s*(?:/\s*MF\s*)?(?:n[º°o.]*\s*|sob\s+o\s+n[º°o.]*\s*|:\s*)*((?:\d[\s.,\-–/]{0,2}){10}\d)(?!\d)",
+            group=1,
+            validator=validate_cpf_checksum,
+        ),
         # Regra #7: Partially Masked CPF (e.g. ***.456.789-** or XXX.456.789-XX)
         RegexRule(
             rule_id="Regra #7 [CPF_MASCARADO]",
@@ -395,6 +416,13 @@ def build_brazilian_legal_rules() -> List[RegexRule]:
             rule_id="Regra #15 [CEP]",
             category="CEP",
             pattern=r"\b(?:CEP\s*[:nº°o.]?\s*)?\d{2}\.?\d{3}\s*[-–]\s*\d{3}\b",
+        ),
+        # Regra #15B: CEP after its label, also without the hyphen or with OCR dots ("CEP 37860000", "CEP: 37.860.000")
+        RegexRule(
+            rule_id="Regra #15B [CEP_ROTULADO]",
+            category="CEP",
+            pattern=r"\bCEP\s*[:nº°o.]*\s*(\d{2}[.\s]?\d{3}[.\s\-–]?\d{3})(?!\d)",
+            group=1,
         ),
         # Regra #16: Vehicle License Plates (inline `placa ABC-1234` OR multi-line form cell `PLACA \n ABC1D23`)
         RegexRule(
@@ -478,7 +506,7 @@ def build_brazilian_legal_rules() -> List[RegexRule]:
         RegexRule(
             rule_id="Regra #26 [CONSELHO_PROFISSIONAL]",
             category="CONSELHO_PROFISSIONAL",
-            pattern=r"\b(?:CRM|CREA|CAU|CRC|COREN|CRO|CRP|CRF|CREFITO|CRN|CRBM|CRESS)\s*(?:[-–/]\s*[A-Z]{2}|\s+[A-Z]{2})?\s*(?:[:\-–]|n[º°o.:]+)?\s*\d{2,4}(?:\.?\d{3})*(?:\s*[-–/]\s*[A-Za-z0-9]{1,4})?\b",
+            pattern=r"\b(?:CRM|CREA|CAU|CRC|COREN|CRO|CRP|CRF|CREFITO|CRN|CRBM|CRESS)\s*(?:[-–/]\s*[A-Z]{2}|\s+[A-Z]{2}|(?:AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)(?=[\s:\-–n]))?\s*(?:[:\-–]|n[º°o.:]+)?\s*\d{2,4}(?:\.?\d{3})*(?:\s*[-–/]\s*[A-Za-z0-9]{1,4})?\b",
         ),
         # Regra #27: Notarial & Civil Registry Coordinates (Livro, Folha, Termo & RG DOC. ORIGEM)
         RegexRule(
@@ -880,6 +908,24 @@ def _clean_word_for_fuzzy(s: str) -> str:
     return strip_accents(re.sub(r"^[^\wÀ-ÿ]+|[^\wÀ-ÿ]+$", "", s)).casefold()
 
 
+_FUZZY_TOKENS_CACHE: Dict[int, Tuple[str, List[Tuple[str, str, int, int]]]] = {}
+
+
+def _fuzzy_doc_tokens(text: str) -> List[Tuple[str, str, int, int]]:
+    """The text's words, cleaned once per text (propagation asks for them once per vault entry)."""
+    key = hash(text)
+    hit = _FUZZY_TOKENS_CACHE.get(key)
+    if hit is not None and hit[0] is text:
+        return hit[1]
+    toks = [(m.group(0), _clean_word_for_fuzzy(m.group(0)), m.start(), m.end())
+            for m in re.finditer(r"[\wÀ-ÿ]+(?:[./\-][\wÀ-ÿ]+)*", text)]
+    toks = [t for t in toks if t[1]]
+    if len(_FUZZY_TOKENS_CACHE) > 8:
+        _FUZZY_TOKENS_CACHE.clear()
+    _FUZZY_TOKENS_CACHE[key] = (text, toks)
+    return toks
+
+
 def find_fuzzy_multiword_spans(text: str, target_phrase: str) -> List[str]:
     """
     Finds all n-word spans in `text` that match `target_phrase` under accent-folding
@@ -893,13 +939,10 @@ def find_fuzzy_multiword_spans(text: str, target_phrase: str) -> List[str]:
     if n < 2:
         return []
     target_joined = " ".join(target_words)
-    doc_tokens = [
-        (m.group(0), _clean_word_for_fuzzy(m.group(0)), m.start(), m.end())
-        for m in re.finditer(r"[\wÀ-ÿ]+(?:[./\-][\wÀ-ÿ]+)*", text)
-    ]
-    doc_tokens = [t for t in doc_tokens if t[1]]
+    doc_tokens = _fuzzy_doc_tokens(text)
     if len(doc_tokens) < n:
         return []
+    tl = len(target_joined)
 
     hits: List[str] = []
     for i in range(len(doc_tokens) - n + 1):
@@ -911,7 +954,13 @@ def find_fuzzy_multiword_spans(text: str, target_phrase: str) -> List[str]:
         if win_joined == target_joined:
             hits.append(span_str)
             continue
-        ratio = difflib.SequenceMatcher(None, win_joined, target_joined).ratio()
+        wl_ = len(win_joined)
+        if min(wl_, tl) < 0.71 * max(wl_, tl):  # ratio can't reach 0.83
+            continue
+        sm_ = difflib.SequenceMatcher(None, win_joined, target_joined)
+        if sm_.real_quick_ratio() < 0.83 or sm_.quick_ratio() < 0.83:
+            continue
+        ratio = sm_.ratio()
         if ratio >= 0.83:
             close_words = sum(
                 1
@@ -1236,6 +1285,20 @@ def _scan_deterministic_legal_labels_and_qualifications(
             "pocos de caldas", "belo horizonte", "curitiba", "finalidade", "especifica",
         )
         return not any(b in uf for b in bad_kw)
+
+    # 0. Health professionals next to their council stamp: "Dr. Fulano de Tal\nCRM-MG 12345", "Fulano de Tal - CRM 12345",
+    #    "CRM 12345 Dra. Fulana". A cited relator is never touched (whitelisted spans are skipped).
+    _council = r"(?:CRM|CRO|CRP|COREN|CRF|CREFITO|CRN|CRBM|CRESS)"
+    for rx_ in (
+        rf"(?:Dr(?:\(a\)|a)?\.?\s+)?(?-i:([A-ZÀ-Ý][A-Za-zÀ-ÿ'.]+(?:[ \t]+(?:d[aeo]s?[ \t]+|e[ \t]+)?[A-ZÀ-Ý][A-Za-zÀ-ÿ'.]+){{1,5}}))[ \t]*(?:[-–,|]|\n)[ \t]*(?:M[ée]dic[oa][^\n]{{0,40}}\n?\s*)?{_council}(?:[A-Z]{{2}})?\b",
+        rf"{_council}\s*[-–/]?\s*[A-Z]{{0,2}}\s*[:nº°o.]*\s*[\d.\-]{{3,9}}[ \t]*(?:[-–,|]|\n)?[ \t]*Dr(?:\(a\)|a)?\.?\s+(?-i:([A-ZÀ-Ý][A-Za-zÀ-ÿ'.]+(?:[ \t]+(?:d[aeo]s?[ \t]+|e[ \t]+)?[A-ZÀ-Ý][A-Za-zÀ-ÿ'.]+){{1,5}}))",
+    ):
+        for m in re.finditer(rx_, text, flags=re.IGNORECASE):
+            if is_span_whitelisted(m.start(1), m.end(1), wl_spans):
+                continue
+            cand = _clean_person_candidate(m.group(1))
+            if _is_valid_person_name(cand) and not re.search(r"\b(?:Hospital|Cl[íi]nica|Santa\s+Casa|Unidade|Secretaria|Conselho)\b", cand, re.IGNORECASE):
+                register_entity(session_data, cand, "PESSOA")
 
     # 1. Qualification Clauses: `<NAME>, brasileiro(a)` or `<NAME>. brasileiro(a)`
     for m in re.finditer(
@@ -2368,12 +2431,13 @@ def _is_whole_word_pdf_rect(page_words: List[Any], rect: Any, original: str) -> 
     return True
 
 
-def _search_page_rects_tolerant(fitz: Any, page: Any, page_words: List[Any], original: str) -> List[Any]:
-    rects: List[Any] = list(page.search_for(original))
+def _search_page_rects_tolerant(fitz: Any, page: Any, page_words: List[Any], original: str, textpage: Any = None) -> List[Any]:
+    kw = {"textpage": textpage} if textpage is not None else {}
+    rects: List[Any] = list(page.search_for(original, **kw))
     if " " in original:
         dbl = re.sub(r"\s+", "  ", original.strip())
         if dbl != original:
-            rects.extend(page.search_for(dbl))
+            rects.extend(page.search_for(dbl, **kw))
 
     orig_parts = [_clean_pdf_word_token(p) for p in original.strip().split() if _clean_pdf_word_token(p)]
     if orig_parts and page_words:
@@ -2508,7 +2572,13 @@ def redact_pdf(
         non_cam_chars = len(re.sub(r"digitalizadocomcamscanner|\s+", "", page_text, flags=re.IGNORECASE))
         has_large_imgs = _fitz_page_has_large_embedded_images(page)
 
-        if non_cam_chars < 40 and len(page.get_images()) > 0:
+        vector_only = non_cam_chars < 40 and _fitz_page_is_vector_drawn(page)
+        if vector_only:
+            # Letters drawn as curves ("print to PDF" with outlined fonts, bank/SCR reports): there is no text to
+            # search, so the page is OCR'd like a scan. Flatten it to pixels first, so the black boxes cover pixels
+            # and no glyph outline survives underneath.
+            _flatten_fitz_page_to_image(fitz, page)
+        if non_cam_chars < 40 and (len(page.get_images()) > 0 or vector_only):
             redacted_count = _try_visual_redact_fitz_page(
                 fitz,
                 doc,
@@ -2526,8 +2596,17 @@ def redact_pdf(
 
         page_words = page.get_text("words")
         done_items: List[Tuple[Any, str]] = []
+        try:
+            tpage = page.get_textpage()  # built once; each search_for used to rebuild it (≈20 ms × every vault entry)
+        except Exception:
+            tpage = None
+        folded_page = strip_accents(page_text).casefold()
         for original, token in pairs:
-            for rect in _search_page_rects_tolerant(fitz, page, page_words, original):
+            # cheap pre-check: skip entries whose words are nowhere on the page
+            first_w = strip_accents(original.strip().split()[0]).casefold() if original.strip() else ""
+            if first_w and len(first_w) >= 3 and first_w not in folded_page:
+                continue
+            for rect in _search_page_rects_tolerant(fitz, page, page_words, original, textpage=tpage):
                 rect_area = max(rect.get_area(), 1e-6)
                 if any((rect & r).get_area() / rect_area >= 0.45 for r, _ in done_items):
                     continue
@@ -2659,6 +2738,27 @@ def _render_redacted_pdf_previews(
     except Exception:
         pass
     return previews
+
+
+def _fitz_page_is_vector_drawn(page: Any, min_items: int = 400) -> bool:
+    """A page with no text layer but thousands of path segments: text printed as outlines."""
+    try:
+        n = 0
+        for d in page.get_drawings():
+            n += len(d.get("items", ()))
+            if n >= min_items:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _flatten_fitz_page_to_image(fitz: Any, page: Any, dpi: int = 200) -> None:
+    pix = page.get_pixmap(dpi=dpi)
+    page.add_redact_annot(page.rect, fill=(1, 1, 1))
+    page.apply_redactions(images=getattr(fitz, "PDF_REDACT_IMAGE_REMOVE", 1),
+                          graphics=getattr(fitz, "PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED", 2))
+    page.insert_image(page.rect, pixmap=pix)
 
 
 def _try_visual_redact_fitz_page(
@@ -3525,6 +3625,209 @@ def _write_discovered_entities_template_if_absent(staging_path: Path) -> None:
     _safe_json_write(staging_path, template)
 
 
+# ----------------------------------------------------------------------------
+# CLI helpers: one workspace per session, progress you can watch, no repeated work
+# ----------------------------------------------------------------------------
+_T0 = time.time()
+
+
+def _progress(msg: str) -> None:
+    """One line per step on stderr, flushed at once: a caller watching a background job sees where it is."""
+    try:
+        sys.stderr.write(f"[{time.time() - _T0:6.1f}s] {msg}\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def _session_workspace(src: Path, session_id: Optional[str], explicit_output_dir: Optional[str]) -> Dict[str, Path]:
+    """The workspace `chunk` used for this folder is the one `anonymize` must use: the session remembers it, so a
+    later call without --output-dir still reads the entities file the model edited."""
+    base = (src if src.is_dir() else src.parent).resolve()
+    remembered = None
+    if session_id and not explicit_output_dir:
+        try:
+            _, sd_ = create_or_load_session(session_id)
+            remembered = (sd_.get("workspaces") or {}).get(str(base))
+        except Exception:
+            remembered = None
+    ws = resolve_anonymization_workspace(src, explicit_output_dir=explicit_output_dir or remembered)
+    if session_id:
+        try:
+            _, sd_ = create_or_load_session(session_id)
+            if (sd_.get("workspaces") or {}).get(str(base)) != str(ws["delivery_dir"]):
+                sd_.setdefault("workspaces", {})[str(base)] = str(ws["delivery_dir"])
+                save_session(session_id, sd_)
+        except Exception:
+            pass
+    return ws
+
+
+def _entities_files_for(ws: Dict[str, Path], session_id: Optional[str]) -> List[Path]:
+    """Every entities file that belongs to this session and folder, newest first: the workspace's staging file,
+    the vault's copy, and the staging files of other workspaces this session used for the same folder."""
+    cands: List[Path] = [ws["session_work_dir"] / "discovered_entities.json"]
+    if session_id:
+        cands.append(get_session_dir(session_id) / "discovered_entities.json")
+        try:
+            _, sd_ = create_or_load_session(session_id)
+            for d in (sd_.get("workspaces") or {}).values():
+                cands.append(Path(d) / "_work" / "session" / "discovered_entities.json")
+        except Exception:
+            pass
+    seen: Set[str] = set()
+    out: List[Path] = []
+    for c in cands:
+        k = str(c.resolve()) if c.exists() else ""
+        if k and k not in seen:
+            seen.add(k)
+            out.append(c)
+    return sorted(out, key=lambda x: x.stat().st_mtime, reverse=True)
+
+
+def _file_fingerprint(path: Path, session_data: Dict[str, Any]) -> str:
+    import hashlib
+    h = hashlib.sha1()
+    with open(path, "rb") as fh:
+        for blk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(blk)
+    h.update(json.dumps(sorted((session_data.get("token_to_original") or {}).items()), ensure_ascii=False).encode("utf-8"))
+    h.update(json.dumps(sorted(session_data.get("whitelist") or []), ensure_ascii=False).encode("utf-8"))
+    h.update(json.dumps(session_data.get("visual_redactions") or session_data.get("VISUAL_REDACTIONS") or {}, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8"))
+    try:
+        h.update(str(Path(__file__).stat().st_mtime).encode())
+    except Exception:
+        pass
+    return h.hexdigest()
+
+
+
+# ----------------------------------------------------------------------------
+# `verify`: read the delivered files back and list what is still readable
+# ----------------------------------------------------------------------------
+_VERIFY_REGEX_CATEGORIES = {"CPF", "CNPJ", "CEP", "TELEFONE", "EMAIL", "RG", "CNH", "OAB", "PIS", "CTPS", "CONTA_BANCARIA",
+                            "CONSELHO_PROFISSIONAL", "PLACA", "PROCESSO", "PROCESSO_PRIVADO", "MATRICULA_IMOVEL"}
+
+
+def _verify_pages(path: Path, verify_cache_id: str) -> List[Tuple[int, str, str]]:
+    """[(page, text, how)] for a delivered file; scanned or flattened PDF pages are OCR'd again."""
+    suf = path.suffix.lower()
+    if suf == ".pdf":
+        fitz = _import_fitz()
+        out: List[Tuple[int, str, str]] = []
+        doc = fitz.open(str(path))
+        try:
+            for i, pg in enumerate(doc):
+                txt = pg.get_text("text")
+                # what a reader sees on an image page is the pixels: OCR them (the drawn placeholder labels are the
+                # only text such a page carries)
+                body = re.sub(r"<[A-Z0-9_]+_\d+[a-z0-9]*>|\s+", "", txt)
+                if pg.get_images() and len(body) < 40:
+                    try:
+                        import visual_redactor as vr_
+                        txt = vr_.ocr_single_pdf_page_text(path, page_number=i + 1, session_id=verify_cache_id)
+                        out.append((i + 1, txt, "ocr"))
+                        continue
+                    except Exception as exc:
+                        out.append((i + 1, "", f"ocr failed: {type(exc).__name__}"))
+                        continue
+                out.append((i + 1, txt, "text"))
+        finally:
+            doc.close()
+        return out
+    if suf in (".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"):
+        try:
+            import visual_redactor as vr_
+            return [(1, vr_.ocr_single_pdf_page_text(path, page_number=1, session_id=verify_cache_id), "ocr")]
+        except Exception as exc:
+            return [(1, "", f"ocr failed: {type(exc).__name__}")]
+    return [(1, extract_text_from_file(path), "text")]
+
+
+def _mask_context(line: str, s: int, e: int, label: str) -> str:
+    a = max(0, s - 50)
+    b = min(len(line), e + 50)
+    left = re.sub(r"\s+", " ", line[a:s])
+    right = re.sub(r"\s+", " ", line[e:b])
+    return f"…{left}[{label}, {e - s} chars]{right}…"
+
+
+def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str]] = None) -> Dict[str, Any]:
+    _, sd = create_or_load_session(session_id)
+    pairs = [(o, t) for o, t in build_longest_first_replacement_pairs(sd) if len(o.strip()) >= 4]
+    compiled = [(re.compile(build_entity_boundary_pattern(o), re.IGNORECASE), o, t) for o, t in pairs]
+    name_parts: List[Tuple[Any, str]] = []
+    for gid, g in (sd.get("canonical_groups") or {}).items():
+        if g.get("category") in ("PESSOA", "PERSON"):
+            for part in str(g.get("canonical", "")).split():
+                cp = re.sub(r"[^\wÀ-ÿ]", "", part)
+                if len(cp) >= 4 and cp.casefold() not in PORTUGUESE_COMMON_WORD_STOPWORDS and normalize_key_fold(cp) not in PORTUGUESE_COMMON_WORD_STOPWORDS:
+                    name_parts.append((re.compile(r"\b" + re.escape(strip_accents(cp)) + r"\b", re.IGNORECASE), f"<{gid}>"))
+    files = sorted(p for p in delivery_dir.iterdir()
+                   if p.is_file() and ".anonymized." in p.name and p.suffix.lower() != ".json")
+    if only:
+        files = [p for p in files if any(w.casefold() in p.name.casefold() for w in only)]
+    report: List[Dict[str, Any]] = []
+    total = 0
+    cache_id = f"verify_{session_id}"
+    for f_i, f in enumerate(files, start=1):
+        _progress(f"verify {f_i}/{len(files)}: {f.suffix.lower()} file")
+        hits: List[Dict[str, Any]] = []
+        for page, txt, how in _verify_pages(f, cache_id):
+            if how.startswith("ocr failed"):
+                hits.append({"page": page, "kind": "unchecked", "why": how})
+                continue
+            body = txt.replace(CLOUD_LLM_HEADER_PT, "")
+            folded = strip_accents(body)
+            wl = compute_whitelist_spans(body, sd.get("whitelist", []))
+            seen_spans: List[Tuple[int, int]] = []
+            def add(s_: int, e_: int, kind: str, token: str, cat: str) -> None:
+                if is_span_whitelisted(s_, e_, wl) or any(s_ < b and e_ > a for a, b in seen_spans):
+                    return
+                if re.fullmatch(r"<[A-Z0-9_]+_\d+[a-z0-9]*>", body[s_:e_].strip()):
+                    return
+                seen_spans.append((s_, e_))
+                ls = body.rfind("\n", 0, s_) + 1
+                le_ = body.find("\n", e_)
+                le_ = len(body) if le_ < 0 else le_
+                hits.append({"page": page, "kind": kind, "token": token, "category": cat, "read_by": how,
+                             "context": _mask_context(body[ls:le_], s_ - ls, e_ - ls, token or cat)})
+            for rx, orig, tok in compiled:
+                for m in rx.finditer(body):
+                    add(m.start(), m.end(), "vault value still readable", tok, tok.strip("<>").rsplit("_", 1)[0])
+                if folded != body:
+                    for m in rx.finditer(folded):
+                        add(m.start(), m.end(), "vault value still readable", tok, tok.strip("<>").rsplit("_", 1)[0])
+            for rx, tok in name_parts:
+                for m in rx.finditer(folded):
+                    add(m.start(), m.end(), "part of a registered name still readable", tok, "PESSOA")
+            probe = {"token_to_original": {}, "surface_to_token": {}, "counters": {}, "canonical_groups": {},
+                     "whitelist": list(sd.get("whitelist", [])), "stats": {"files_processed": [], "rule_hits": {}, "ignored_false_positives": []}}
+            try:
+                scan_deterministic_regexes(body, probe)
+            except Exception:
+                probe = {"token_to_original": {}}
+            for tok, orig in (probe.get("token_to_original") or {}).items():
+                cat = tok.strip("<>").rsplit("_", 1)[0]
+                if cat not in _VERIFY_REGEX_CATEGORIES or not orig or len(orig.strip()) < 4:
+                    continue
+                for m in re.finditer(re.escape(orig), body):
+                    known = (sd.get("surface_to_token") or {}).get(normalize_key(orig))
+                    add(m.start(), m.end(), "new identifier the vault doesn't have" if not known else "vault value still readable",
+                        known or "", cat)
+        total += len(hits)
+        report.append({"file": str(f), "pages_checked": len({h["page"] for h in hits}) if hits else None,
+                       "leaks": hits[:60], "leak_count": len(hits)})
+    return {"status": "ok" if total == 0 else "leaks_found", "session_id": session_id, "delivery_dir": str(delivery_dir),
+            "files_checked": len(files), "leaks_total": total, "files": report,
+            "next_step": ("Nothing readable is left: the files are ready." if total == 0 else
+                          "For each leak: a 'vault value' or 'part of a registered name' was missed by the redactor on that page — "
+                          "add the page's box under VISUAL_REDACTIONS (line_ids from the page's .grid image, or boxes) or the exact "
+                          "surface form under its category in the entities file; a 'new identifier' goes under its category. Then run "
+                          "anonymize again with the same --session (only changed files are redone) and verify again. Never paste "
+                          "the values anywhere else.")}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="legal_anonymizer.py",
@@ -3596,6 +3899,8 @@ def main() -> None:
         help="How to handle embedded images in .docx files: 'placeholder' (opaque IMAGEM REMOVIDA box, default), 'redact' (visual OCR black-box), or 'keep'",
     )
     p_anon.add_argument("--log-mode", choices=["normal", "ultra"], default="normal", help="Audit detail level")
+    p_anon.add_argument("--only", nargs="*", default=[], help="With --dir: only files whose name contains one of these")
+    p_anon.add_argument("--force", action="store_true", help="Redo files that have not changed since the last run")
 
     # 4. `restore`: De-anonymize a text or .docx file back to original client values
     p_rest = sub.add_parser(
@@ -3611,7 +3916,19 @@ def main() -> None:
     p_insp.add_argument("--session", required=True, help="Session ID")
     p_insp.add_argument("--reveal", action="store_true", help="Include original cleartext values in output")
 
+    p_ver = sub.add_parser("verify", help="Read the delivered files back (OCR for image pages) and list every PII still readable, by file and page, without printing it.")
+    p_ver.add_argument("--session", required=True, help="Session ID")
+    p_ver.add_argument("--dir", default=None, help="The case folder (its session workspace is found automatically)")
+    p_ver.add_argument("--file", default=None, help="A case file (its folder's workspace is used)")
+    p_ver.add_argument("--output-dir", default=None, help="The delivery folder, if it isn't the remembered one")
+    p_ver.add_argument("--only", nargs="*", default=[], help="Only delivered files whose name contains one of these")
+
     args = parser.parse_args()
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
     if args.command == "chunk":
         if not args.file and not args.dir:
@@ -3623,7 +3940,8 @@ def main() -> None:
 
         if args.file:
             fpath = Path(args.file).expanduser().resolve()
-            ws = resolve_anonymization_workspace(fpath, explicit_output_dir=args.output_dir)
+            ws = _session_workspace(fpath, session_id, args.output_dir)
+            session_data.setdefault("workspaces", {})[str(ws["source_dir"])] = str(ws["delivery_dir"])
             staging_path = ws["session_work_dir"] / "discovered_entities.json"
             _write_discovered_entities_template_if_absent(staging_path)
             _write_discovered_entities_template_if_absent(sdir / "discovered_entities.json")
@@ -3656,7 +3974,8 @@ def main() -> None:
             print(json.dumps(out_payload, ensure_ascii=False, indent=2))
         else:
             dpath = Path(args.dir).expanduser().resolve()
-            ws = resolve_anonymization_workspace(dpath, explicit_output_dir=args.output_dir)
+            ws = _session_workspace(dpath, session_id, args.output_dir)
+            session_data.setdefault("workspaces", {})[str(ws["source_dir"])] = str(ws["delivery_dir"])
             staging_path = ws["session_work_dir"] / "discovered_entities.json"
             _write_discovered_entities_template_if_absent(staging_path)
             _write_discovered_entities_template_if_absent(sdir / "discovered_entities.json")
@@ -3694,7 +4013,8 @@ def main() -> None:
             all_chunks = []
             combined_blocks = []
             all_scanned_vision: List[Dict[str, Any]] = []
-            for f in files:
+            for f_i, f in enumerate(files, start=1):
+                _progress(f"chunk {f_i}/{len(files)}: {f.suffix.lower()} file ({f.stat().st_size // 1024} KB)")
                 info, pre_masked, scanned_vision = _chunk_single_file(
                     f, session_id, session_data, args.max_chars, args.overlap, ws=ws
                 )
@@ -3783,12 +4103,20 @@ def main() -> None:
 
         if args.file:
             fpath = Path(args.file).expanduser().resolve()
-            ws = resolve_anonymization_workspace(fpath, explicit_output_dir=args.output_dir)
+            ws = _session_workspace(fpath, args.session, args.output_dir)
             deliv_dir = ws["delivery_dir"]
             if ef_path is None:
-                cand_ef = ws["session_work_dir"] / "discovered_entities.json"
-                if cand_ef.exists():
-                    ef_path = cand_ef
+                efs = _entities_files_for(ws, args.session)
+                if efs:
+                    ef_path = efs[0]
+                    if args.session and len(efs) > 1:
+                        _, sd_m = create_or_load_session(args.session)
+                        for extra in efs[1:]:
+                            try:
+                                apply_external_entities_payload(sd_m, json.loads(extra.read_text(encoding="utf-8")))
+                            except Exception:
+                                pass
+                        save_session(args.session, sd_m)
             res = anonymize_file_pipeline(
                 input_path=fpath,
                 session_id=args.session,
@@ -3807,12 +4135,9 @@ def main() -> None:
             print(json.dumps(res, ensure_ascii=False, indent=2))
         else:
             dpath = Path(args.dir).expanduser().resolve()
-            ws = resolve_anonymization_workspace(dpath, explicit_output_dir=args.output_dir)
+            ws = _session_workspace(dpath, args.session, args.output_dir)
             deliv_dir = ws["delivery_dir"]
-            if ef_path is None:
-                cand_ef = ws["session_work_dir"] / "discovered_entities.json"
-                if cand_ef.exists():
-                    ef_path = cand_ef
+            entity_files = [ef_path] if ef_path else _entities_files_for(ws, args.session)
 
             files = sorted(
                 [
@@ -3825,22 +4150,24 @@ def main() -> None:
                     and p.name != "discovered_entities.json"
                 ]
             )
+            if args.only:
+                wanted = [w.casefold() for w in args.only]
+                files = [p for p in files if any(w in p.name.casefold() for w in wanted)]
             session_id, session_data = create_or_load_session(args.session)
-            if ef_path and ef_path.exists():
-                apply_external_entities_payload(
-                    session_data, json.loads(ef_path.read_text(encoding="utf-8"))
-                )
-            elif (get_session_dir(session_id) / "discovered_entities.json").exists():
-                apply_external_entities_payload(
-                    session_data,
-                    json.loads((get_session_dir(session_id) / "discovered_entities.json").read_text(encoding="utf-8")),
-                )
+            for ef_ in entity_files:
+                try:
+                    apply_external_entities_payload(session_data, json.loads(ef_.read_text(encoding="utf-8")))
+                except Exception as exc:
+                    _progress(f"could not read an entities file ({type(exc).__name__}): fix its JSON")
+            _progress(f"anonymize: {len(files)} file(s), {len(session_data.get('token_to_original', {}))} vault entries, "
+                      f"entities from {len(entity_files)} file(s); output in {deliv_dir}")
             if args.entities_json:
                 apply_external_entities_payload(session_data, json.loads(args.entities_json))
 
             combined_texts = []
             working_files = []
-            for f in files:
+            for f_i, f in enumerate(files, start=1):
+                _progress(f"reading {f_i}/{len(files)}: {f.suffix.lower()} file ({f.stat().st_size // 1024} KB)")
                 wf = stage_working_copy(f, ws["originals_copy_dir"])
                 working_files.append((f, wf))
                 ftxt = extract_text_from_file(wf, session_id=session_id)
@@ -3854,7 +4181,23 @@ def main() -> None:
             ready_files: List[str] = []
             blocked_files: List[str] = []
             all_preview_images: List[str] = []
-            for orig_f, _ in working_files:
+            done_map = session_data.setdefault("delivered", {})
+            for f_i, (orig_f, _) in enumerate(working_files, start=1):
+                fkey = str(orig_f.resolve())
+                fp = _file_fingerprint(orig_f, session_data)
+                prev = done_map.get(fkey) or {}
+                if (not args.force and prev.get("fingerprint") == fp and prev.get("result")
+                        and all(Path(x).exists() for x in prev["result"].get("delivered_to_cloud_ready_dir") or [])):
+                    _progress(f"redacting {f_i}/{len(working_files)}: unchanged since the last run, kept")
+                    res = dict(prev["result"], unchanged_since_last_run=True)
+                    batch_results.append(res)
+                    ready_files.extend(res.get("delivered_to_cloud_ready_dir") or [])
+                    all_preview_images.extend(res.get("redacted_preview_images") or [])
+                    if res.get("status") != "ok":
+                        blocked_files.append(fkey)
+                    continue
+                t_f = time.time()
+                _progress(f"redacting {f_i}/{len(working_files)}: {orig_f.suffix.lower()} file")
                 res = anonymize_file_pipeline(
                     input_path=orig_f,
                     session_id=session_id,
@@ -3870,6 +4213,10 @@ def main() -> None:
                     log_mode=args.log_mode,
                     docx_image_mode=args.docx_image_mode,
                 )
+                _progress(f"redacting {f_i}/{len(working_files)}: {res.get('status')} in {time.time() - t_f:.1f}s")
+                _, sd_now = create_or_load_session(session_id)
+                sd_now.setdefault("delivered", {})[fkey] = {"fingerprint": _file_fingerprint(orig_f, sd_now), "result": res}
+                save_session(session_id, sd_now)
                 batch_results.append(res)
                 if res.get("delivered_to_cloud_ready_dir"):
                     ready_files.extend(res["delivered_to_cloud_ready_dir"])
@@ -3903,6 +4250,11 @@ def main() -> None:
                     indent=2,
                 )
             )
+
+    elif args.command == "verify":
+        src = Path(args.dir or args.file or ".").expanduser().resolve()
+        ws = _session_workspace(src, args.session, args.output_dir)
+        print(json.dumps(verify_delivery(args.session, ws["delivery_dir"], args.only), ensure_ascii=False, indent=2))
 
     elif args.command == "restore":
         fpath = Path(args.file).expanduser().resolve()

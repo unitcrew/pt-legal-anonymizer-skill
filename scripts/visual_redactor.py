@@ -2057,6 +2057,46 @@ def match_session_entities_to_ocr_boxes(
                     for idx in hit_w_idxs:
                         covered_word_indices.add(idx)
 
+    # 2b. Names in tables and lists: OCR often reads them out of order or split ("SOBRENOME, NOME", columns read
+    #     across). On one line, two or more distinctive parts of the same registered person, side by side, are boxed.
+    if not is_id_card_landmark_page:
+        stop = la.PORTUGUESE_COMMON_WORD_STOPWORDS
+        for gid, g in (session_data.get("canonical_groups") or {}).items():
+            if g.get("category") not in ("PESSOA", "PERSON"):
+                continue
+            tok = f"<{gid}>"
+            parts = {_clean_ocr_token(pp) for pp in str(g.get("canonical", "")).split()}
+            parts = {pp for pp in parts if len(pp) >= 4 and pp not in stop and la.normalize_key_fold(pp) not in stop}
+            if len(parts) < 2:
+                continue
+            for line in lines:
+                w_idxs = [idx for idx in line.get("word_indices", []) if idx not in covered_word_indices]
+                hit = [idx for idx in w_idxs if cleaned_words[idx] in parts
+                       or (len(cleaned_words[idx]) >= 5 and any(difflib.SequenceMatcher(None, cleaned_words[idx], pp).ratio() >= 0.86 for pp in parts))]
+                if len({cleaned_words[idx] for idx in hit}) < 2:
+                    continue
+                # keep runs of neighbouring words (a gap of one connector like "de" is fine)
+                pos = {idx: k for k, idx in enumerate(line.get("word_indices", []))}
+                hit.sort(key=lambda x: pos.get(x, 0))
+                run: List[int] = [hit[0]]
+                runs: List[List[int]] = []
+                for idx in hit[1:]:
+                    if pos.get(idx, 0) - pos.get(run[-1], 0) <= 2:
+                        run.append(idx)
+                    else:
+                        runs.append(run)
+                        run = [idx]
+                runs.append(run)
+                for r_ in runs:
+                    if len(r_) < 2:
+                        continue
+                    lo, hi = pos[r_[0]], pos[r_[-1]]
+                    span = line["word_indices"][lo:hi + 1]
+                    bx = [words[i_]["bbox_1000"] for i_ in span]
+                    matched_boxes.append({"bbox_1000": [min(b[0] for b in bx), min(b[1] for b in bx), max(b[2] for b in bx), max(b[3] for b in bx)],
+                                          "token": tok, "original": g.get("canonical", "")})
+                    covered_word_indices.update(span)
+
     # 3. Automatic Handwritten Signature Detection (`<ASSINATURA_N>`) above signer blocks
     if img is not None:
         sig_detections = detect_signature_boxes_1000(img, layout, matched_boxes)
