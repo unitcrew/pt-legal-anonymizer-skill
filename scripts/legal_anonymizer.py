@@ -3749,7 +3749,7 @@ def _mask_context(line: str, s: int, e: int, label: str) -> str:
     b = min(len(line), e + 50)
     left = re.sub(r"\s+", " ", line[a:s])
     right = re.sub(r"\s+", " ", line[e:b])
-    return f"…{left}[{label}, {e - s} chars]{right}…"
+    return f"…{left}⟦LEAK HERE: {label} still written out, {e - s} characters⟧{right}…"
 
 
 def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -3828,6 +3828,9 @@ def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str
         pass
     return {"status": "ok" if total == 0 else "leaks_found", "session_id": session_id, "delivery_dir": str(delivery_dir),
             "files_checked": len(files), "leaks_total": total, "files": report,
+            "how_to_read": ("In each leak's 'context', ⟦LEAK HERE: …⟧ is NOT text in the file: it marks the spot where the "
+                            "file still has the real value written out (masked in this report so it isn't repeated). The "
+                            "words around it are the file's real text. 'token' is the placeholder the value should have become."),
             "next_step": ("Nothing readable is left: the files are ready." if total == 0 else
                           "For each leak: a 'vault value' or 'part of a registered name' was missed by the redactor on that page — "
                           "add the page's box under VISUAL_REDACTIONS (line_ids from the page's .grid image, or boxes) or the exact "

@@ -3,7 +3,7 @@ name: pt-legal-anonymizer
 description: Anonymize and restore Brazilian and Portuguese legal documents (.docx, .pdf, .txt, .md, .csv) and scanned image PDFs/receipts/IDs (.pdf, .png, .jpg, .jpeg) 100% locally with full formatting preservation, automatic dependency installation, working-copy isolation inside <folder>/anonymization/, native 1024-token .grid.jpg vision inspection auto-staged in workspace, smart 2-up vertical ID stacking, deterministic CNH/RG landmark & sub-image redaction, Modulo-11 CPF/CNPJ/PIS validation, longest-to-shortest replacement, true PyMuPDF vector and pixel redaction with white placeholders, embedded DOCX image placeholder/restoration, pre-Pass-A underline OCR recovery, and session consistency. Use whenever the user asks to anonymize, redact, mask, sanitize, de-identify, or restore lawsuits, petitions, procuracoes, personal IDs (RG/CNH), police reports (BO/REDS), bank receipts, contracts, or court dockets.
 ---
 
-# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v6.6)
+# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v6.7)
 
 This skill provides a **100% local, zero-cloud, formatting-preserving, and reversible** PII anonymization and visual redaction pipeline for Brazilian and Portuguese legal workflows (`PJe`, `eproc`, `e-SAJ`, `Projudi`, `SEEU`, `REDS`/`BO`, bank receipts, boletos, personal IDs `RG`/`CNH`, WhatsApp screenshots, and powers of attorney `Procurações`).
 
@@ -152,7 +152,8 @@ python "<SKILL_DIR>/scripts/legal_anonymizer.py" anonymize --file "<CAMINHO_DO_A
 python "<SKILL_DIR>/scripts/legal_anonymizer.py" verify --dir "<PASTA_DOS_DOCUMENTOS>" --session "<SESSION_ID>"
 ```
 
-- Each leak gives the file, the page, the kind, the placeholder (when the vault knows it) and the line around it with the value replaced by `[<PESSOA_3>, 18 chars]`.
+- Each leak gives the file, the page, the kind, the placeholder (when the vault knows it) and the line around it, with the value itself replaced by a marker like `⟦LEAK HERE: <PESSOA_3> still written out, 18 characters⟧`. **The marker is not in the file**: the file has the real value at that spot. Don't look for brackets in the file or treat the marker as an OCR problem.
+- Common cause of a `vault value still readable` leak in text output: the file writes the value slightly differently from the vault entry (accents, extra words such as "sob o número", a line break, a different separator). Add that exact surface form under the same category and rerun with `--only`.
   - `vault value still readable` / `part of a registered name still readable`: the redactor missed it on that page (a table cell, a stamp, a line OCR read out of order). Add that page's line `#ID` or a box under `VISUAL_REDACTIONS`, or the exact way it is written there (all caps, surname first) under `PESSOA`.
   - `new identifier the vault doesn't have`: add it under its category.
 - Then `anonymize --dir … --session … --only <file>` and `verify` again. Two rounds are normal; if a third still shows the same leak, tell the user which page and what kind, instead of trying again.
