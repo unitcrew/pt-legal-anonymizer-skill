@@ -230,7 +230,7 @@ DEFAULT_LEGAL_WHITELIST_PATTERNS = [
     # 6. Military / Police Battalions and Companies ("77 CIA PM/12 BPM/18 RPM", "1 GP/4 PEL")
     r"\b\d{1,3}\s*(?:CIA|BPM|RPM|PEL|GP|DP|DRPC)\b",
     # 7. Public Municipality + UF patterns ("Município de Conceição da Aparecida-MG", "cidade de Nova Resende/MG", across newlines)
-    r"\b(?:Munic[íi]pio|Municipio|Munic[a-zà-ÿ]+o|Cidade|Comarca|Natural|Foro)[\s\n]+d[eao][\s\n]+[A-ZÀ-Ÿa-zà-ÿ]+(?:[\s\n]+d[aeo]s?[\s\n]+[A-ZÀ-Ÿa-zà-ÿ]+|[\s\n]+[A-ZÀ-Ÿa-zà-ÿ]+){0,3}(?:\s*[-/(\s]\s*[A-Z]{2})?\b",
+    r"\b(?:Munic[íi]pio|Municipio|Munic[a-zà-ÿ]+o|Cidade|Comarca|Natural|Foro)[ \t]+d[eao][ \t]+[A-ZÀ-Ÿa-zà-ÿ]+(?:[ \t]+d[aeo]s?[ \t]+[A-ZÀ-Ÿa-zà-ÿ]+|[ \t]+[A-ZÀ-Ÿa-zà-ÿ]+){0,3}(?:[ \t]*[-/(][ \t]*[A-Z]{2})?\b",
     # 8. Compound MG/SP Municipality Gazetteer (protects towns sharing personal/saint names like Conceição da Aparecida, Santa Rita de Caldas, São José da Barra, etc.)
     r"\b(?:Concei[çc][ãa]o[\s\n]+da[\s\n]+Aparecida|Santa[\s\n]+Rita[\s\n]+d[eo][\s\n]+[A-ZÀ-Ÿa-zà-ÿ]+|S[ãa]o[\s\n]+(?:Jos[ée]|Jo[ãa]o|Sebasti[ãa]o|Tom[áa]s|Pedro|Louren[çc]o|Gon[çc]alo|Bento|Vicente|Roque|carlos|Paulo|Sim[ãa]o|Tiago)[\s\n]+(?:d[aeo]s?[\s\n]+)?[A-ZÀ-Ÿa-zà-ÿ]+(?:[\s\n]+d[aeo]s?[\s\n]+[A-ZÀ-Ÿa-zà-ÿ]+)?|Bom[\s\n]+Jesus[\s\n]+d[aeo]s?[\s\n]+[A-ZÀ-Ÿa-zà-ÿ]+|Monte[\s\n]+(?:Santo|Belo|Si[ãa]o|Carmelo)(?:[\s\n]+de[\s\n]+Minas)?|Po[çc]os[\s\n]+de[\s\n]+Caldas|Nova[\s\n]+Resende|Carmo[\s\n]+do[\s\n]+Rio[\s\n]+Claro|Ita[úu][\s\n]+de[\s\n]+Minas|Alpin[óo]polis|Alpind?[ée]polis|Muzambinho)(?:\s*[-/(\s]\s*[A-Z]{2})?\b",
 ]

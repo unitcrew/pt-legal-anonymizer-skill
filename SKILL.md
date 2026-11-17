@@ -3,7 +3,7 @@ name: pt-legal-anonymizer
 description: Anonymize and restore Brazilian and Portuguese legal documents (.docx, .pdf, .txt, .md, .csv) and scanned image PDFs/receipts/IDs (.pdf, .png, .jpg, .jpeg) 100% locally with full formatting preservation, automatic dependency installation, working-copy isolation inside <folder>/anonymization/, native 1024-token .grid.jpg vision inspection auto-staged in workspace, smart 2-up vertical ID stacking, deterministic CNH/RG landmark & sub-image redaction, Modulo-11 CPF/CNPJ/PIS validation, longest-to-shortest replacement, true PyMuPDF vector and pixel redaction with white placeholders, embedded DOCX image placeholder/restoration, pre-Pass-A underline OCR recovery, and session consistency. Use whenever the user asks to anonymize, redact, mask, sanitize, de-identify, or restore lawsuits, petitions, procuracoes, personal IDs (RG/CNH), police reports (BO/REDS), bank receipts, contracts, or court dockets.
 ---
 
-# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v7.0)
+# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v8.0)
 
 This skill provides a **100% local, zero-cloud, formatting-preserving, and reversible** PII anonymization and visual redaction pipeline for Brazilian and Portuguese legal workflows (`PJe`, `eproc`, `e-SAJ`, `Projudi`, `SEEU`, `REDS`/`BO`, bank receipts, boletos, personal IDs `RG`/`CNH`, WhatsApp screenshots, and powers of attorney `Procurações`).
 
@@ -15,7 +15,16 @@ It is engineered for **local vision LLMs** (such as `Qwen3.6 35B-A3B` in `LocalC
 
 ## Start here
 
-The short version of this guide is `QUICKREF.md` (LocalChat keeps it in front of you for the whole chat). This page has the details.
+**v8: anonymize with `scripts/anon.py`, one page at a time.** The short version is `QUICKREF.md` (LocalChat keeps it in front of you for the whole chat). In one sentence: `start --dir "<PASTA>"` once, then for each page look at the image, `apply` your choices (drop wrong suggestions, add what is missing), look at the FINAL render it shows, and `done --note "..."` when nothing personal is readable; the next page comes by itself.
+
+Why v8 works this way:
+- **One page at a time.** A model that sees many pages at once loses track of them. The script never shows more than one page (or one ~2,600-character section of a .docx/.txt).
+- **Suggestions, never forced boxes.** Earlier versions drew automatic redactions the model could not remove (on a camera-scanned police report the photo/fingerprint/signature detectors covered whole form sections). Now every box is a numbered suggestion you can `--drop`, and you can add text, whole lines or rectangles yourself.
+- **No paths after `start`.** Pages are D1-P2, suggestions S3, your additions A1. A folder typed with a wrong accent is matched to the real one.
+- **Done means seen.** `done` is refused until you have looked at the final render of the current choices, and it needs a note of what was hidden (LocalChat keeps it as this chat's progress).
+- **Consistent tokens.** Whatever you hide on one page is suggested on every later page and document, with the same token (`PESSOA_1` stays `PESSOA_1`). PDFs are redacted for real (text removed, image pixels blanked), metadata and annotations are dropped, and the output file name has hidden names replaced too.
+
+The older commands below (`chunk`/`anonymize`/`verify` in `legal_anonymizer.py`) still work and `restore` is still how you de-anonymize, but use `anon.py` to anonymize.
 
 ## How the script behaves (don't read its code to find out — it's all here)
 
