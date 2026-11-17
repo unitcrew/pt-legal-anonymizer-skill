@@ -678,6 +678,29 @@ def extract_address_core(address: str) -> Tuple[Optional[str], Optional[str], Li
     return None, (head if len(head) >= 5 else None), house_nums
 
 
+
+_NAME_CONNECTORS = {"da", "de", "do", "das", "dos", "e", "di", "du", "del", "van", "von"}
+
+
+def looks_like_person_name(value: str) -> bool:
+    """A name as people write it: 1-7 words, letters only, each word capitalized or in capitals (connectors such as
+    "de"/"da" aside). A whole line, a date, a year, a money value or ordinary words are not names."""
+    v = re.sub(r"\s+", " ", str(value or "")).strip(" ,.;:-–")
+    if not v or re.search(r"\d", v) or len(v) > 90:
+        return False
+    words = v.split(" ")
+    if not 1 <= len(words) <= 7:
+        return False
+    real = [w for w in words if w.casefold() not in _NAME_CONNECTORS]
+    if not real or any(not re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'.\-]*", w) for w in real):
+        return False
+    if any(not (w[0].isupper()) for w in real):
+        return False
+    if len(real) == 1 and len(real[0]) < 3:
+        return False
+    return True
+
+
 def register_entity(
     session_data: Dict[str, Any],
     surface: str,
@@ -702,6 +725,10 @@ def register_entity(
         return tok_existing
 
     cat_upper = canonicalize_category(category)
+    if cat_upper in ("PESSOA", "APELIDO") and not looks_like_person_name(surface_clean):
+        # a whole marked line, a year, a value or ordinary words: hide it where it is written, but never treat it
+        # as a person (name parts of it would be hunted, and flagged, in every other file)
+        cat_upper = "TRECHO_REDIGIDO"
     groups = session_data.setdefault("canonical_groups", {})
 
     matched_group_id: Optional[str] = None
@@ -3752,13 +3779,27 @@ def _mask_context(line: str, s: int, e: int, label: str) -> str:
     return f"…{left}⟦LEAK HERE: {label} still written out, {e - s} characters⟧{right}…"
 
 
+def repair_person_entries(sd: Dict[str, Any]) -> List[str]:
+    """Older sessions could hold PESSOA entries that aren't names (a marked line, a year, a value). Move them to
+    TRECHO_REDIGIDO: their exact text is still hidden, their 'parts' are no longer hunted. Returns the tokens moved."""
+    moved = []
+    for gid, g in (sd.get("canonical_groups") or {}).items():
+        if g.get("category") in ("PESSOA", "APELIDO") and not looks_like_person_name(g.get("canonical", "")):
+            g["category"] = "TRECHO_REDIGIDO"
+            moved.append(f"<{gid}>")
+    return moved
+
+
 def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str]] = None) -> Dict[str, Any]:
     _, sd = create_or_load_session(session_id)
+    repaired = repair_person_entries(sd)
+    if repaired:
+        save_session(session_id, sd)
     pairs = [(o, t) for o, t in build_longest_first_replacement_pairs(sd) if len(o.strip()) >= 4]
     compiled = [(re.compile(build_entity_boundary_pattern(o), re.IGNORECASE), o, t) for o, t in pairs]
     name_parts: List[Tuple[Any, str]] = []
     for gid, g in (sd.get("canonical_groups") or {}).items():
-        if g.get("category") in ("PESSOA", "PERSON"):
+        if g.get("category") in ("PESSOA", "PERSON") and looks_like_person_name(g.get("canonical", "")):
             for part in str(g.get("canonical", "")).split():
                 cp = re.sub(r"[^\wÀ-ÿ]", "", part)
                 if len(cp) >= 4 and cp.casefold() not in PORTUGUESE_COMMON_WORD_STOPWORDS and normalize_key_fold(cp) not in PORTUGUESE_COMMON_WORD_STOPWORDS:
@@ -3800,6 +3841,8 @@ def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str
                         add(m.start(), m.end(), "vault value still readable", tok, tok.strip("<>").rsplit("_", 1)[0])
             for rx, tok in name_parts:
                 for m in rx.finditer(folded):
+                    if not folded[m.start()].isupper():
+                        continue        # "motorista", "silva" in lowercase: an ordinary word, not the name
                     add(m.start(), m.end(), "part of a registered name still readable", tok, "PESSOA")
             probe = {"token_to_original": {}, "surface_to_token": {}, "counters": {}, "canonical_groups": {},
                      "whitelist": list(sd.get("whitelist", [])), "stats": {"files_processed": [], "rule_hits": {}, "ignored_false_positives": []}}
@@ -3827,6 +3870,9 @@ def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str
     except Exception:
         pass
     return {"status": "ok" if total == 0 else "leaks_found", "session_id": session_id, "delivery_dir": str(delivery_dir),
+            "repaired_entries": (f"{len(repaired)} entries filed as names weren't names (a marked line, a year, a value): "
+                                 "they are now hidden only exactly as written. Run anonymize again (only affected files are redone)."
+                                 if repaired else None),
             "files_checked": len(files), "leaks_total": total, "files": report,
             "how_to_read": ("In each leak's 'context', ⟦LEAK HERE: …⟧ is NOT text in the file: it marks the spot where the "
                             "file still has the real value written out (masked in this report so it isn't repeated). The "
@@ -4237,6 +4283,10 @@ def main() -> None:
                 wanted = [w.casefold() for w in args.only]
                 files = [p for p in files if any(w in p.name.casefold() for w in wanted)]
             session_id, session_data = create_or_load_session(args.session)
+            repaired_ = repair_person_entries(session_data)
+            if repaired_:
+                save_session(session_id, session_data)
+                _progress(f"{len(repaired_)} entries filed as names weren't names (a marked line, a year, a value): kept only as exact passages")
             for ef_ in entity_files:
                 try:
                     apply_external_entities_payload(session_data, json.loads(ef_.read_text(encoding="utf-8")))

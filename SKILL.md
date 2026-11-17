@@ -3,7 +3,7 @@ name: pt-legal-anonymizer
 description: Anonymize and restore Brazilian and Portuguese legal documents (.docx, .pdf, .txt, .md, .csv) and scanned image PDFs/receipts/IDs (.pdf, .png, .jpg, .jpeg) 100% locally with full formatting preservation, automatic dependency installation, working-copy isolation inside <folder>/anonymization/, native 1024-token .grid.jpg vision inspection auto-staged in workspace, smart 2-up vertical ID stacking, deterministic CNH/RG landmark & sub-image redaction, Modulo-11 CPF/CNPJ/PIS validation, longest-to-shortest replacement, true PyMuPDF vector and pixel redaction with white placeholders, embedded DOCX image placeholder/restoration, pre-Pass-A underline OCR recovery, and session consistency. Use whenever the user asks to anonymize, redact, mask, sanitize, de-identify, or restore lawsuits, petitions, procuracoes, personal IDs (RG/CNH), police reports (BO/REDS), bank receipts, contracts, or court dockets.
 ---
 
-# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v6.7)
+# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v6.8)
 
 This skill provides a **100% local, zero-cloud, formatting-preserving, and reversible** PII anonymization and visual redaction pipeline for Brazilian and Portuguese legal workflows (`PJe`, `eproc`, `e-SAJ`, `Projudi`, `SEEU`, `REDS`/`BO`, bank receipts, boletos, personal IDs `RG`/`CNH`, WhatsApp screenshots, and powers of attorney `Procurações`).
 
@@ -23,6 +23,8 @@ It is engineered for **local vision LLMs** (such as `Qwen3.6 35B-A3B` in `LocalC
 - **OCR is cached per file version**, so it's reused and never stale.
 - **Scanned pages, and pages whose letters are drawn as curves (no text layer),** are OCR'd and boxed on the page image. Text pages are redacted in the PDF text.
 - **`verify` is the only proof a file is clean.** Its leaks name the file, the page and the placeholder, with the value masked.
+- **Marking a line with `line_ids` or a region with `boxes` hides it on that page and, word for word, in the text output — nothing more.** Only a real name (letters only, capitalized: "JOSÉ DA SILVA", "Magalhães") is filed as `PESSOA` and searched for in its variants; a marked line with a date, a value or ordinary words is filed as `TRECHO_REDIGIDO`. Never put dates, years, values or ordinary words under `PESSOA`. Older sessions are repaired automatically by `anonymize`/`verify` (`repaired_entries`).
+- **Paths with accents (Ç, Ã, Ó…) go in as they are, in quotes.** Never write `\u00c7`-style escapes in a command.
 - **Output:** the JSON result goes to stdout and one progress line per file goes to stderr. Run commands plainly, with no `Out-File`.
 
 ## 0. Golden Rules for the Local Agent (Read First!)
