@@ -3816,8 +3816,16 @@ def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str
                     add(m.start(), m.end(), "new identifier the vault doesn't have" if not known else "vault value still readable",
                         known or "", cat)
         total += len(hits)
+        sd.setdefault("verified", {})[str(f.resolve())] = {"leaks": len(hits), "at": time.strftime("%Y-%m-%d %H:%M"),
+                                                           "mtime": f.stat().st_mtime}
         report.append({"file": str(f), "pages_checked": len({h["page"] for h in hits}) if hits else None,
                        "leaks": hits[:60], "leak_count": len(hits)})
+    try:
+        _, sd_save = create_or_load_session(session_id)
+        sd_save["verified"] = {**(sd_save.get("verified") or {}), **sd.get("verified", {})}
+        save_session(session_id, sd_save)
+    except Exception:
+        pass
     return {"status": "ok" if total == 0 else "leaks_found", "session_id": session_id, "delivery_dir": str(delivery_dir),
             "files_checked": len(files), "leaks_total": total, "files": report,
             "next_step": ("Nothing readable is left: the files are ready." if total == 0 else
@@ -3826,6 +3834,72 @@ def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str
                           "surface form under its category in the entities file; a 'new identifier' goes under its category. Then run "
                           "anonymize again with the same --session (only changed files are redone) and verify again. Never paste "
                           "the values anywhere else.")}
+
+
+
+HOW_IT_BEHAVES = [
+    "chunk: run once per folder. It picks the workspace (default <folder>/anonymization, or --output-dir) and the session "
+    "remembers it; every later command with the same --session uses it, with or without --output-dir.",
+    "Entities: edit the entities_staging_file chunk printed (<workspace>/_work/session/discovered_entities.json). anonymize "
+    "reads it, the vault's copy and the staging files of the session's other workspaces for that folder, and merges them.",
+    "anonymize --dir redoes only files whose content, vault entries, whitelist or visual redactions changed since their "
+    "last run, or whose outputs are missing; the rest are kept ('unchanged_since_last_run'). Adding or editing an entity "
+    "redoes every file (the vault changed). --only <part of a name> limits it to some files; --force redoes all.",
+    "Never delete outputs, _work or caches to force a rerun: change the entities and rerun, or use --force.",
+    "OCR results are cached per file version (size + time) in the session; they are reused, never stale.",
+    "Scanned pages and pages without a text layer (letters drawn as curves) are OCR'd, matched against the vault and "
+    "covered with black boxes on the page image; text pages are redacted in the PDF text.",
+    "verify reads the outputs back (OCR for image pages) and lists what is still readable per file and page, values masked. "
+    "A file is done only when verify says ok.",
+    "Progress goes to stderr one line per file; the JSON result goes to stdout. Don't wrap commands in Out-File.",
+    "Cited case law (court, case number, relator, dates, DJe) is never anonymized.",
+]
+
+
+def session_status(session_id: str, src: Path, ws: Dict[str, Path]) -> Dict[str, Any]:
+    _, sd = create_or_load_session(session_id)
+    base = src if src.is_dir() else src.parent
+    files = sorted(p for p in base.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+                   and ".anonymized." not in p.name and ".restored." not in p.name and p.name != "discovered_entities.json") \
+        if base.is_dir() else []
+    done_map = sd.get("delivered") or {}
+    verified = sd.get("verified") or {}
+    rows: List[Dict[str, Any]] = []
+    for f in files:
+        prev = done_map.get(str(f.resolve())) or {}
+        outs = (prev.get("result") or {}).get("delivered_to_cloud_ready_dir") or []
+        if not prev:
+            state = "not anonymized yet"
+        elif any(not Path(o).exists() for o in outs):
+            state = "outputs missing: the next anonymize redoes it"
+        elif prev.get("fingerprint") != _file_fingerprint(f, sd):
+            state = "changed since (file or vault): the next anonymize redoes it"
+        else:
+            state = "up to date: the next anonymize keeps it"
+        v = [verified.get(str(Path(o).resolve())) for o in outs if Path(o).exists()]
+        v = [x for x in v if x]
+        rows.append({"file": f.name, "type": f.suffix.lower(), "state": state,
+                     "last_result": (prev.get("result") or {}).get("status"),
+                     "outputs": [Path(o).name for o in outs],
+                     "verify": ("never run" if not v else
+                                f"{sum(x['leaks'] for x in v)} leak(s) at {max(x['at'] for x in v)}")})
+    pending = [r for r in rows if not r["state"].startswith("up to date")]
+    leaky = [r for r in rows if r["verify"].split()[0].isdigit() and r["verify"].split()[0] != "0"]
+    unverified = [r for r in rows if r["verify"] == "never run" and r["outputs"]]
+    if pending:
+        nxt = f"Run anonymize --dir \"{base}\" --session {session_id} ({len(pending)} file(s) will be redone), then verify."
+    elif leaky:
+        nxt = ("verify found leaks: run verify for the details, fix the entities / VISUAL_REDACTIONS for those pages, "
+               "then anonymize (only what changed is redone) and verify again.")
+    elif unverified:
+        nxt = f"Run verify --dir \"{base}\" --session {session_id}."
+    else:
+        nxt = "Every file is anonymized and verified clean."
+    return {"status": "ok", "session_id": session_id, "source_dir": str(base),
+            "workspace": str(ws["delivery_dir"]), "entities_file_to_edit": str(ws["session_work_dir"] / "discovered_entities.json"),
+            "entities_files_read": [str(x) for x in _entities_files_for(ws, session_id)],
+            "vault_entries": len(sd.get("token_to_original") or {}), "files": rows, "next_step": nxt,
+            "how_it_behaves": HOW_IT_BEHAVES}
 
 
 def main() -> None:
@@ -3922,6 +3996,12 @@ def main() -> None:
     p_ver.add_argument("--file", default=None, help="A case file (its folder's workspace is used)")
     p_ver.add_argument("--output-dir", default=None, help="The delivery folder, if it isn't the remembered one")
     p_ver.add_argument("--only", nargs="*", default=[], help="Only delivered files whose name contains one of these")
+
+    p_st = sub.add_parser("status", help="Where a session stands: its workspace, which entities files it reads, what the next anonymize will redo, verify results, the next step, and how the script behaves.")
+    p_st.add_argument("--session", required=True, help="Session ID")
+    p_st.add_argument("--dir", default=None, help="The case folder")
+    p_st.add_argument("--file", default=None, help="A case file (its folder is used)")
+    p_st.add_argument("--output-dir", default=None, help="The workspace, if it isn't the remembered one")
 
     args = parser.parse_args()
     for stream in (sys.stdout, sys.stderr):
@@ -4245,11 +4325,19 @@ def main() -> None:
                             "files_needing_review": blocked_files,
                         },
                         "results": batch_results,
+                        "kept_unchanged": sum(1 for r in batch_results if r.get("unchanged_since_last_run")),
+                        "next_step": ("Run verify --dir \"" + str(dpath) + "\" --session " + session_id + " before saying any file is done. "
+                                      "Reruns redo only what changed: never delete outputs or _work. Run status to see where the session stands."),
                     },
                     ensure_ascii=False,
                     indent=2,
                 )
             )
+
+    elif args.command == "status":
+        src = Path(args.dir or args.file or ".").expanduser().resolve()
+        ws = _session_workspace(src, args.session, args.output_dir)
+        print(json.dumps(session_status(args.session, src, ws), ensure_ascii=False, indent=2))
 
     elif args.command == "verify":
         src = Path(args.dir or args.file or ".").expanduser().resolve()

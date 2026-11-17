@@ -13,6 +13,18 @@ It is engineered for **local vision LLMs** (such as `Qwen3.6 35B-A3B` in `LocalC
 
 > **v6.4**: photo, thumbprint, signature and field boxes on CNH/RG cards are now placed from the labels printed on the card itself, so they land correctly at any scan size or position (v6.3 used fixed page coordinates). Sideways cards are detected by comparing all four rotations. Vertical serial numbers are boxed where OCR actually reads them. Boleto barcodes and URLs are matched even when OCR inserts spaces.
 
+## How the script behaves (don't read its code to find out — it's all here)
+
+- **Ask the script, not the code:** `python "<SKILL_DIR>/scripts/legal_anonymizer.py" status --dir "<PASTA>" --session "<SESSION_ID>"` prints the workspace, the entities file to edit, which files the next `anonymize` will redo or keep, the last `verify` result per file, the next step, and this list.
+- **Reruns redo only what changed.** `anonymize --dir` keeps a file when its content, the vault, the whitelist and its visual redactions are all unchanged and its outputs still exist. Editing or adding any entity changes the vault, so every file is redone. `--only <part of a name>` limits a run to some files; `--force` redoes everything.
+- **Never delete outputs, `_work`, caches or the session to force a rerun.** It isn't needed (see above) and it throws away OCR that took minutes.
+- **One workspace per session.** `chunk` picks it (default `<PASTA>/anonymization`, or `--output-dir`); every later command with the same `--session` uses it on its own.
+- **The entities file to edit** is the `entities_staging_file` `chunk` printed (also in `status`). `anonymize` merges it with the vault's copy.
+- **OCR is cached per file version**, so it's reused and never stale.
+- **Scanned pages, and pages whose letters are drawn as curves (no text layer),** are OCR'd and boxed on the page image. Text pages are redacted in the PDF text.
+- **`verify` is the only proof a file is clean.** Its leaks name the file, the page and the placeholder, with the value masked.
+- **Output:** the JSON result goes to stdout and one progress line per file goes to stderr. Run commands plainly, with no `Out-File`.
+
 ## 0. Golden Rules for the Local Agent (Read First!)
 
 1. **Step 0 — Missing Requirements Are Installed Automatically**:
