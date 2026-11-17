@@ -91,7 +91,7 @@ python "<SKILL_DIR>/scripts/legal_anonymizer.py" chunk --file "<CAMINHO_DO_ARQUI
 - `"scanned_pages_to_inspect_with_vision"`: Per-page metadata including `"grid_image"`, `"auto_matched_boxes_count"` (red boxes already applied by the blind script), and `"candidate_blue_badges"` (remaining unmatched `#ID` lines).
 - `"inline_pre_masked_text"`: Full pre-masked text across all files (with all deterministic regex, qualification, receipt, and ID entities already replaced by `<PESSOA_N>`, `<EMPRESA_N>`, `<CPF_N>`, etc.).
 
-### Step 2: Mandatory Vision Backup — View `.grid.jpg` Batches (`<= 4` per Turn) & Populate `entities_staging_file`
+### Step 2: View the page images (`<= 4` per turn) and fill the entities file (`discovered_entities.json` format and example)
 
 1. Step through `"vision_batches_max_4_per_turn"` by calling `show_file` on **1 batch (at most 4 `.grid.jpg` files) per turn** until every page in it has been visually inspected. The batches hold only the pages that need eyes (`"needs_vision": true`: photos, ID cards, QR codes, unsure OCR); clean typed pages (`"needs_vision": false`) were read by OCR and are reviewed from the chunk text, which saves an image (~1,000 tokens) per page. Open one of those only if its text suggests handwriting, stamps, signatures or a photo:
    - Check the **bold red boxes** on each page: anything inside a red box is **already** redacted by the blind script.
