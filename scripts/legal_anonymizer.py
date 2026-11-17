@@ -372,7 +372,7 @@ def build_brazilian_legal_rules() -> List[RegexRule]:
         RegexRule(
             rule_id="Regra #9 [OAB]",
             category="OAB",
-            pattern=r"\bOAB\s*(?:[/\-–]\s*[A-Z]{2}|\s+[A-Z]{2})\s*(?:sob\s+(?:o\s+)?(?:n[úu]mero\s+)?|inscri[çc][ãa]o\s+|[:\-–]\s*|n[º°o.:]+\s*)?\d{1,3}(?:[.,]\d{3}|\d{3,5})(?:\s*[-–]\s*[A-Z]\b)?|\bOAB(?:\s*[/\-–]?\s*[A-Z]{2})?\s+(?:sob\s+(?:o\s+)?(?:n[úu]mero)?|inscri[çc][ãa]o|n[º°o.:]+)(?:[\s:]+|\s*\n\s*)(?:n[º°o.:]?\s*)?\d{1,3}(?:[.,]\d{3}|\d{3,5})(?:\s*[-–]\s*[A-Z]\b)?",
+            pattern=r"\bOAB\s*(?:[/\-–]\s*[A-Z]{2}|\s+[A-Z]{2})\s*(?:sob\s+(?:o\s+)?(?:(?:n[úu]mero|n\.?\s?[º°o])\.?\s*)?|inscri[çc][ãa]o\s+|[:\-–]\s*|n[º°o.:]+\s*)?\d{1,3}(?:[.,]\d{3}|\d{3,5})(?:\s*[-–]\s*[A-Z]\b)?|\bOAB(?:\s*[/\-–]?\s*[A-Z]{2})?\s+(?:sob\s+(?:o\s+)?(?:n[úu]mero)?|inscri[çc][ãa]o|n[º°o.:]+)(?:[\s:]+|\s*\n\s*)(?:n[º°o.:]?\s*)?\d{1,3}(?:[.,]\d{3}|\d{3,5})(?:\s*[-–]\s*[A-Z]\b)?",
         ),
         # Regra #10: RG / Cédula de Identidade (inline or multiline 'sob o número', tolerating OCR comma separators)
         RegexRule(
@@ -1485,7 +1485,14 @@ def build_longest_first_replacement_pairs(session_data: Dict[str, Any]) -> List[
                 )
             ):
                 continue
-            for candidate_surf in (orig, strip_accents(orig)):
+            cands = [orig, strip_accents(orig)]
+            # An identifier carrying a long number (OAB, CPF, RG, process, account…) is also caught by its number
+            # alone: "OAB/MG sob o nº 123.456" and "OAB/MG sob o numero 123.456" share "123.456".
+            if token.strip("<>").rsplit("_", 1)[0] not in ("PESSOA", "APELIDO", "TRECHO_REDIGIDO", "ENDERECO", "EMPRESA"):
+                for core in re.findall(r"\d[\d.\-/]*\d", orig):
+                    if len(re.sub(r"\D", "", core)) >= 5 and not re.fullmatch(r"\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}", core):
+                        cands.append(core)
+            for candidate_surf in cands:
                 cs_key = candidate_surf.strip().casefold()
                 if cs_key and cs_key not in seen_surfaces:
                     seen_surfaces.add(cs_key)
@@ -1501,6 +1508,8 @@ def build_entity_boundary_pattern(orig: str) -> str:
     parts = [re.escape(p) for p in clean.split() if p]
     body = r"\s+".join(parts)
     prefix = r"\b" if re.match(r"^[\wÀ-ÿ]", clean) else ""
+    if re.match(r"^\d", clean):
+        prefix = r"(?<![\d.,/\-])"      # never the tail of a longer number ("9.123.456" doesn't contain "123.456")
     # Allow CPF/RG/numbers glued to a trailing 'e' or comma in OCR (e.g. '123.456.789-09e')
     if re.search(r"\d$", clean) and any(ch in clean for ch in ".-/"):
         suffix = r"(?!\d)"
@@ -3811,6 +3820,8 @@ def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str
     report: List[Dict[str, Any]] = []
     total = 0
     cache_id = f"verify_{session_id}"
+    fixes: Dict[str, List[Dict[str, Any]]] = {}
+    new_tokens: List[str] = []
     for f_i, f in enumerate(files, start=1):
         _progress(f"verify {f_i}/{len(files)}: {f.suffix.lower()} file")
         hits: List[Dict[str, Any]] = []
@@ -3828,6 +3839,11 @@ def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str
                 if re.fullmatch(r"<[A-Z0-9_]+_\d+[a-z0-9]*>", body[s_:e_].strip()):
                     return
                 seen_spans.append((s_, e_))
+                surface = body[s_:e_]
+                if not token:
+                    token = register_entity(sd, surface, cat)    # a new identifier: into the vault, so it can be fixed
+                    new_tokens.append(token)
+                fixes.setdefault(str(f), []).append({"page": page, "surface": surface, "token": token})
                 ls = body.rfind("\n", 0, s_) + 1
                 le_ = body.find("\n", e_)
                 le_ = len(body) if le_ < 0 else le_
@@ -3864,11 +3880,15 @@ def verify_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str
         report.append({"file": str(f), "pages_checked": len({h["page"] for h in hits}) if hits else None,
                        "leaks": hits[:60], "leak_count": len(hits)})
     try:
+        if new_tokens:
+            save_session(session_id, sd)          # new identifiers found by verify are now in the vault
         _, sd_save = create_or_load_session(session_id)
         sd_save["verified"] = {**(sd_save.get("verified") or {}), **sd.get("verified", {})}
         save_session(session_id, sd_save)
     except Exception:
         pass
+    _LAST_FIXES.clear()
+    _LAST_FIXES.update(fixes)
     return {"status": "ok" if total == 0 else "leaks_found", "session_id": session_id, "delivery_dir": str(delivery_dir),
             "repaired_entries": (f"{len(repaired)} entries filed as names weren't names (a marked line, a year, a value): "
                                  "they are now hidden only exactly as written. Run anonymize again (only affected files are redone)."
@@ -3949,6 +3969,117 @@ def session_status(session_id: str, src: Path, ws: Dict[str, Path]) -> Dict[str,
             "entities_files_read": [str(x) for x in _entities_files_for(ws, session_id)],
             "vault_entries": len(sd.get("token_to_original") or {}), "files": rows, "next_step": nxt,
             "how_it_behaves": HOW_IT_BEHAVES}
+
+
+_LAST_FIXES: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def _fold_keep_len(text: str) -> str:
+    """Lowercase, accents removed, one character for one character (so positions still match the original)."""
+    return "".join((unicodedata.normalize("NFD", ch)[:1] or ch).lower() for ch in text)
+
+
+def _fix_transform(items: List[Dict[str, Any]]) -> Callable[[str], str]:
+    """Replace every leaked surface (any case, accents, spacing or line breaks) by its placeholder."""
+    pats = []
+    for it in sorted(items, key=lambda x: -len(x["surface"])):
+        words = _fold_keep_len(it["surface"]).split()
+        if not words:
+            continue
+        pats.append((re.compile(r"(?<![\w])" + r"\s+".join(re.escape(w) for w in words) + r"(?![\w])"), it["token"]))
+
+    def tf(text: str) -> str:
+        if not text:
+            return text
+        for rx, tok in pats:
+            folded = _fold_keep_len(text)
+            spans = [(m.start(), m.end()) for m in rx.finditer(folded)]
+            for a, b in reversed(spans):
+                text = text[:a] + tok + text[b:]
+        return text
+    return tf
+
+
+def _fix_pdf_page(fitz: Any, page: Any, path: Path, page_no: int, items: List[Dict[str, Any]], cache_id: str) -> int:
+    """Black out the leaked words on one PDF page: in its text where it has one, else on the page image (OCR'd)."""
+    rects: List[Any] = []
+    words = page.get_text("words")
+    body = re.sub(r"<[A-Z0-9_]+_\d+[a-z0-9]*>|\s+", "", page.get_text("text"))
+    if words and len(body) >= 40:
+        seq = [(_fold_keep_len(w[4]).strip(".,;:()[]"), fitz.Rect(w[:4])) for w in words]
+    else:
+        import visual_redactor as vr_
+        lay = vr_.extract_ocr_layout_for_page(path, page_number=page_no, session_id=cache_id)
+        W, H = page.rect.width, page.rect.height
+        seq = [(_fold_keep_len(w.get("text", "")).strip(".,;:()[]"),
+                fitz.Rect(w["bbox_1000"][0] * W / 1000, w["bbox_1000"][1] * H / 1000, w["bbox_1000"][2] * W / 1000, w["bbox_1000"][3] * H / 1000))
+               for w in lay.get("words") or []]
+    for it in items:
+        target = [t.strip(".,;:()[]") for t in _fold_keep_len(it["surface"]).split()]
+        n = len(target)
+        if not n:
+            continue
+        for i in range(len(seq) - n + 1):
+            if all(seq[i + k][0] == target[k] for k in range(n)):
+                r = fitz.Rect(seq[i][1])
+                for k in range(1, n):
+                    r |= seq[i + k][1]
+                rects.append(r)
+    for r in rects:
+        page.add_redact_annot(r + (-2, -2, 2, 2), fill=(0, 0, 0))
+    if rects:
+        page.apply_redactions(images=getattr(fitz, "PDF_REDACT_IMAGE_PIXELS", 2))
+    return len(rects)
+
+
+def fix_delivery(session_id: str, delivery_dir: Path, only: Optional[List[str]] = None) -> Dict[str, Any]:
+    """verify, then fix every leak it found in the delivered files themselves (text replaced by its placeholder,
+    PDF words blacked out), then verify again. What is left after that needs the model's eyes."""
+    before = verify_delivery(session_id, delivery_dir, only)
+    fixed: List[Dict[str, Any]] = []
+    for fpath, items in list(_LAST_FIXES.items()):
+        f = Path(fpath)
+        n = 0
+        try:
+            suf = f.suffix.lower()
+            if suf == ".docx":
+                tf = _fix_transform(items)
+                rewrite_docx_package_atomic(f, f, tf, image_updates=None, is_restore=False)
+                n = len(items)
+            elif suf == ".pdf":
+                fitz = _import_fitz()
+                doc = fitz.open(str(f))
+                by_page: Dict[int, List[Dict[str, Any]]] = {}
+                for it in items:
+                    by_page.setdefault(int(it["page"]), []).append(it)
+                for pno, its in by_page.items():
+                    n += _fix_pdf_page(fitz, doc[pno - 1], f, pno, its, f"fix_{session_id}")
+                tmp = f.with_suffix(".fixing.pdf")
+                doc.save(str(tmp), garbage=3, deflate=True)
+                doc.close()
+                os.replace(tmp, f)
+            elif suf in (".txt", ".md", ".csv", ".json"):
+                txt = f.read_text(encoding="utf-8")
+                new = _fix_transform(items)(txt)
+                n = len(items) if new != txt else 0
+                f.write_text(new, encoding="utf-8")
+            else:
+                continue
+            _progress(f"fixed {n} spot(s) in a {suf} file")
+        except Exception as exc:
+            fixed.append({"file": str(f), "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        fixed.append({"file": str(f), "spots_fixed": n})
+    after = verify_delivery(session_id, delivery_dir, only)
+    left = after["leaks_total"]
+    return {"status": "ok" if left == 0 else "leaks_left", "session_id": session_id, "leaks_before": before["leaks_total"],
+            "fixed": fixed, "leaks_left": left, "files": after["files"], "how_to_read": after.get("how_to_read"),
+            "next_step": ("Nothing readable is left. Now look for yourself: open the redacted previews or the outputs "
+                          "of the pages with personal data and check them with your own eyes before telling the user it is done."
+                          if left == 0 else
+                          "These leaks could not be fixed automatically (usually a handwritten or stamped item OCR can't read "
+                          "the same way twice). Look at those pages yourself (the preview/grid images) and cover them with "
+                          "VISUAL_REDACTIONS boxes, then anonymize --only <file> and verify --fix again.")}
 
 
 def main() -> None:
@@ -4045,6 +4176,7 @@ def main() -> None:
     p_ver.add_argument("--file", default=None, help="A case file (its folder's workspace is used)")
     p_ver.add_argument("--output-dir", default=None, help="The delivery folder, if it isn't the remembered one")
     p_ver.add_argument("--only", nargs="*", default=[], help="Only delivered files whose name contains one of these")
+    p_ver.add_argument("--fix", action="store_true", help="Fix every leak found in the delivered files themselves, then verify again")
 
     p_st = sub.add_parser("status", help="Where a session stands: its workspace, which entities files it reads, what the next anonymize will redo, verify results, the next step, and how the script behaves.")
     p_st.add_argument("--session", required=True, help="Session ID")
@@ -4395,7 +4527,8 @@ def main() -> None:
     elif args.command == "verify":
         src = Path(args.dir or args.file or ".").expanduser().resolve()
         ws = _session_workspace(src, args.session, args.output_dir)
-        print(json.dumps(verify_delivery(args.session, ws["delivery_dir"], args.only), ensure_ascii=False, indent=2))
+        out_ = fix_delivery(args.session, ws["delivery_dir"], args.only) if args.fix else verify_delivery(args.session, ws["delivery_dir"], args.only)
+        print(json.dumps(out_, ensure_ascii=False, indent=2))
 
     elif args.command == "restore":
         fpath = Path(args.file).expanduser().resolve()

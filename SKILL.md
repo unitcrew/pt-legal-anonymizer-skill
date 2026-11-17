@@ -3,7 +3,7 @@ name: pt-legal-anonymizer
 description: Anonymize and restore Brazilian and Portuguese legal documents (.docx, .pdf, .txt, .md, .csv) and scanned image PDFs/receipts/IDs (.pdf, .png, .jpg, .jpeg) 100% locally with full formatting preservation, automatic dependency installation, working-copy isolation inside <folder>/anonymization/, native 1024-token .grid.jpg vision inspection auto-staged in workspace, smart 2-up vertical ID stacking, deterministic CNH/RG landmark & sub-image redaction, Modulo-11 CPF/CNPJ/PIS validation, longest-to-shortest replacement, true PyMuPDF vector and pixel redaction with white placeholders, embedded DOCX image placeholder/restoration, pre-Pass-A underline OCR recovery, and session consistency. Use whenever the user asks to anonymize, redact, mask, sanitize, de-identify, or restore lawsuits, petitions, procuracoes, personal IDs (RG/CNH), police reports (BO/REDS), bank receipts, contracts, or court dockets.
 ---
 
-# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v6.8)
+# Portuguese & Brazilian Legal Document Anonymizer (`pt-legal-anonymizer` v7.0)
 
 This skill provides a **100% local, zero-cloud, formatting-preserving, and reversible** PII anonymization and visual redaction pipeline for Brazilian and Portuguese legal workflows (`PJe`, `eproc`, `e-SAJ`, `Projudi`, `SEEU`, `REDS`/`BO`, bank receipts, boletos, personal IDs `RG`/`CNH`, WhatsApp screenshots, and powers of attorney `Procurações`).
 
@@ -12,6 +12,10 @@ It is engineered for **local vision LLMs** (such as `Qwen3.6 35B-A3B` in `LocalC
 ---
 
 > **v6.4**: photo, thumbprint, signature and field boxes on CNH/RG cards are now placed from the labels printed on the card itself, so they land correctly at any scan size or position (v6.3 used fixed page coordinates). Sideways cards are detected by comparing all four rotations. Vertical serial numbers are boxed where OCR actually reads them. Boleto barcodes and URLs are matched even when OCR inserts spaces.
+
+## Start here
+
+The short version of this guide is `QUICKREF.md` (LocalChat keeps it in front of you for the whole chat). This page has the details.
 
 ## How the script behaves (don't read its code to find out — it's all here)
 
@@ -42,9 +46,8 @@ It is engineered for **local vision LLMs** (such as `Qwen3.6 35B-A3B` in `LocalC
    - `chunk` renders a single 1,024-token `<doc>.page_0001.grid.jpg` (`~80–180 KB`) per scanned page—or a stacked `<doc>.pages_0001_0002.grid.jpg` for 2-page ID cards (`RG`/`CNH`).
    - Python **automatically mirrors every `.grid.jpg` (and post-redaction `.redacted_preview.jpg`) into `anonymization_pages/<session_id>/` inside your current `LocalChat Workspace` (`os.getcwd()`)**.
    - **NEVER run `xcopy` or `copy` to move images**, and **NEVER look for `.view.png` files**.
-5. **HARD 4-IMAGE-PER-TURN LIMIT (`vision_batches_max_4_per_turn`)**:
-   - `LocalChat` enforces a hard limit of **at most 4 images per turn**. Calling `show_file` on 5+ images in one turn drops vision on the 5th+ image.
-   - Always step through `"vision_batches_max_4_per_turn"` one batch at a time (**at most 4 `show_file` calls per turn**). Never call `read_file` on `.jpg` or `.png` files.
+5. **Look at images with `read_file`, at most 4 per turn**:
+   - `read_file` on a `.jpg`/`.png` shows you the image. Step through `"vision_batches_max_4_per_turn"` one batch at a time. Older images you are done with are turned into a short description by LocalChat; open one again with `read_file` whenever you need to check it.
 6. **How to Read `.grid.jpg` Overlays (Red Boxes vs. Blue `#ID` Badges)**:
    - **Bold Red Boxes** (`fill=red, outline=red`) show regions **already caught and scheduled for redaction** by the deterministic blind script. You do **not** need to re-add red-boxed regions!
    - **Blue `#ID` Badges** in the left/right margins (`#1..#99` on Page 1, `#101..#199` on Page 2) mark non-boilerplate lines that are **not yet covered** by a red box.
@@ -61,8 +64,8 @@ It is engineered for **local vision LLMs** (such as `Qwen3.6 35B-A3B` in `LocalC
    - The session remembers the folder `chunk` used. `anonymize` and `verify` with the same `--session` find it (and its `discovered_entities.json`) on their own, with or without `--output-dir`. Always edit the `entities_staging_file` path that `chunk` printed.
 11. **Never redo what is done**:
    - `anonymize --dir` keeps every file whose content and vault have not changed since the last run (`unchanged_since_last_run`). After fixing one file, rerun with `--only <part of its name>`. Use `--force` only when the user asks.
-12. **Let `verify` find the leaks — don't hunt for them by eye**:
-   - After `anonymize`, run `verify` (Step 4). It reads every delivered file back (OCR for image pages), and lists every vault value, part of a registered name, or new CPF/CNPJ/CEP/phone/CRM/e-mail that is still readable, by file and page, with the value masked. A file is done only when `verify` says `ok`. Never tell the user a file is finished while `verify` lists a leak.
+12. **`verify --fix`, then your own eyes**:
+   - After `anonymize`, run `verify --fix`: it reads every delivered file back (OCR for image pages), fixes every leak it finds in the outputs themselves, and checks again. Then open the `.redacted_preview.jpg` of the pages with personal data and look. The scripts run blind; a file is done when `verify` says `ok` **and** you have seen its pages clean.
 13. **Cited case law stays as it is**:
    - Court, case number, relator ("Rel. Min. …", "Des. …"), dates and DJe of a cited precedent are public and are never anonymized; don't register them as entities. Only the parties of the user's own case are hidden.
 
